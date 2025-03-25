@@ -18,7 +18,15 @@ It uses:
 
 ## 📁 Project Structure
 
-Mini-Iperf/  ├── src/ # Source code │ ├── mini_iperf.c # Main program (argument parsing, flow control) │ ├── mini_iperf_client.c # Client-side implementation │ ├── mini_iperf_server.c # Server-side implementation │ └── mini_iperf.h # Shared data structures and function declarations ├── .gitignore # Git ignore rules ├── CMakeLists.txt # CMake configuration (for GCC builds) └── README.md # Project documentation
+Mini-Iperf/  
+├── src/ # Source code │ 
+├── mini_iperf.c # Main program (argument parsing, flow control) │ 
+├── mini_iperf_client.c # Client-side implementation │ 
+├── mini_iperf_server.c # Server-side implementation │ 
+└── mini_iperf.h # Shared data structures and function declarations 
+├── .gitignore # Git ignore rules 
+├── CMakeLists.txt # CMake configuration (for GCC builds) 
+└── README.md # Project documentation
 
 ---
 ## 🛠️ Build Instructions
