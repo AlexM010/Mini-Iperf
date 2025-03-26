@@ -78,6 +78,9 @@ int parse_arguments(int argc, char* argv[], struct arguments* args);
  */
 void print_arguments(const struct arguments* args);
 
+/**
+ * Print help message with usage instructions
+ */
 void print_help();
 
 //Server Functions
