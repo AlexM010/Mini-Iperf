@@ -18,9 +18,67 @@
 
 #ifndef MINI_IPERF_H
 #define MINI_IPERF_H
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <getopt.h>
+/* Initial Functions and Structures */
 
-//Initial Functions
+/**
+  * Structure to hold all command line parameters
+  */
+ struct arguments {
+    char* ip_address;       // -a: IP address (bind address for server, server address for client)
+    int port;               // -p: Port number
+    int interval;           // -i: Progress update interval in seconds
+    char* filename;         // -f: Output filename for results
+    int is_server;          // -s: Flag for server mode
+    int is_client;          // -c: Flag for client mode
+    int packet_size;        // -l: UDP packet size in bytes
+    long bandwidth;         // -b: Bandwidth in bits per second
+    int num_streams;        // -n: Number of parallel streams
+    int duration;           // -t: Experiment duration in seconds
+    int measure_delay;      // -d: Flag for delay measurement mode
+    int wait_duration;      // -w: Wait duration before transmission
+};
 
+ /**
+  * Initialize arguments structure with default values
+  * @param args Pointer to arguments structure to initialize
+  */
+void init_arguments(struct arguments* args);
+
+ /**
+  * Free dynamically allocated memory in arguments structure
+  * @param args Pointer to arguments structure to clean up
+  */
+void free_arguments(struct arguments* args);
+
+/**
+  * Validate an IP address string
+  * @param ip IP address string to validate
+  * @return 1 if valid, 0 if invalid
+  */
+int is_valid_ip(const char* ip);
+
+/**
+  * Parse command line arguments
+  * @param argc Argument count from main()
+  * @param argv Argument vector from main()
+  * @param args Pointer to arguments structure to populate
+  * @return 0 on success, -1 on error
+  */
+int parse_arguments(int argc, char* argv[], struct arguments* args);
+/**
+ * Print all parsed arguments for debugging
+ * @param args Pointer to arguments structure
+ */
+void print_arguments(const struct arguments* args);
+
+void print_help();
 
 //Server Functions
 
