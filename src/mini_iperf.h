@@ -25,6 +25,9 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <getopt.h>
+#include <signal.h>
+#include <pthread.h>
+
 /* Initial Functions and Structures */
 
 /**
@@ -83,10 +86,23 @@ void print_arguments(const struct arguments* args);
  */
 void print_help();
 
+void safe_print(char* message);
+
 //Server Functions
-
-
+int server_start(const char* ip, int port);
+int server_accept(int server_socket);
+int server_receive(int client_socket, char* buffer, int buffer_size);
+int server_send(int client_socket, const char* message, int message_size);
+int server_close(int server_socket);
+void * server_channel_send(void* client_socket);
+void* server_channel_recv(void* client_socket);
 //Client Functions
+int client_connect(const char* server_ip, int server_port);
+int client_send(int client_socket, const char* message, int message_size);
+int client_receive(int client_socket, char* buffer, int buffer_size);
+int client_close(int client_socket);
+void* client_channel_send(void* client_socket);
+void* client_channel_recv(void* client_socket);
 
 
 

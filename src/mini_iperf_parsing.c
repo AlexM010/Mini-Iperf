@@ -1,11 +1,20 @@
 #include "mini_iperf.h"
 
+extern pthread_mutex_t lock;
+extern int line;
+void safe_print(char* message) {
+    pthread_mutex_lock(&lock);
+    printf("%d. Buffer: %s\n", line++,message);
+    pthread_mutex_unlock(&lock);
+}
+
 void init_arguments(struct arguments* args) {
     memset(args, 0, sizeof(struct arguments)); // Clear entire structure
     args->interval = 1;          // Default 1 second interval
     args->packet_size = 1024;    // Default 1KB packet size
     args->num_streams = 1;       // Default single stream
     args->duration = -1;         // -1 means unlimited duration
+    args->port = 5201;             // 5201 default port
     // All other fields are initialized to 0/NULL by memset
 }
 
