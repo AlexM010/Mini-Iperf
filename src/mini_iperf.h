@@ -47,6 +47,25 @@
     int measure_delay;      // -d: Flag for delay measurement mode
     int wait_duration;      // -w: Wait duration before transmission
 };
+#define HEADER_SIZE 16  // Define fixed header size (adjust as needed)
+/**
+ * Structure to represent a data packet
+ */
+typedef struct {
+  MiniIperfHeader header; // Custom header for Mini-Iperf
+  char payload[];         // Flexible array member for payload data
+} MiniIperfPacket;
+/**
+ * Structure to represent the custom header for Mini-Iperf
+ */
+typedef struct {
+    uint16_t source_port;   // 2 bytes
+    uint16_t dest_port;     // 2 bytes
+    uint32_t seq_number;    // 4 bytes
+    uint32_t ack_number;    // 4 bytes
+    uint16_t flags;         // 2 bytes (optional for control flags)
+    uint16_t checksum;      // 2 bytes (for error detection)
+} MiniIperfHeader;
 
  /**
   * Initialize arguments structure with default values
@@ -88,6 +107,8 @@ void print_help();
 
 void safe_print(char* message);
 
+
+// TCP Channel Functions
 //Server Functions
 int server_start(const char* ip, int port);
 int server_accept(int server_socket);
