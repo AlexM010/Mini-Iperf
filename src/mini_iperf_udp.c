@@ -52,7 +52,7 @@ void* udp_sendto(void* args_ptr) {
         header->packet_size = htonl(args->packet_size);
         header->bandwidth = htonl(args->bandwidth);
         header->duration = htonl(args->duration);
-        header->timestamp_sec = htonl((uint32_t)time(NULL));
+        header->timestamp_sec = htonl(now_ts.tv_sec);
         header->sequence_number = htonl(seq);
 
         // Fill payload
