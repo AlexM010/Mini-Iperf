@@ -1,7 +1,7 @@
 #include "mini_iperf.h"
 #include <errno.h>
 #include <poll.h>
-#define MAX_PACKET_SIZE 1500  // MTU-safe max size
+#define MAX_PACKET_SIZE 1024 // MTU-safe max size
 char packet[MAX_PACKET_SIZE]; // stack buffer
 static uint32_t compute_crc32(const uint8_t* data, size_t len);
 void* udp_sendto(void* args_ptr) {
@@ -54,12 +54,14 @@ void* udp_sendto(void* args_ptr) {
         header->packet_size = htonl(args->packet_size);
         header->bandwidth = htonl(args->bandwidth);
         header->duration = htonl(args->duration);
-        header->timestamp_sec = htonl(now_ts.tv_sec);
         header->sequence_number = htonl(seq);
-
+        
         // Fill payload
         memset(payload, 'A' + (seq % 26), payload_size);
-
+        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
+        (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
+        header->timestamp_sec = htonl(now_ts.tv_sec);
         // Compute CRC over entire packet except the CRC field
         header->crc32 = 0;
         header->crc32 = htonl(compute_crc32(packet, args->packet_size));
@@ -68,7 +70,7 @@ void* udp_sendto(void* args_ptr) {
                (struct sockaddr*)&server_addr, sizeof(server_addr));
 
         if(args->bandwidth>0) {
-            usleep((int)delay_usec);
+           usleep((int)delay_usec);
         }
         seq++;
         if (args->duration > 0 && elapsed_sec >= args->duration) break;
