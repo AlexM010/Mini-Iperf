@@ -82,6 +82,7 @@ void* udp_recv(void* args_ptr) {
         fprintf(stderr, "Packet size too large\n");
         return NULL;
     }
+
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("UDP socket creation failed");
@@ -99,6 +100,9 @@ void* udp_recv(void* args_ptr) {
         return NULL;
     }
 
+    struct sockaddr_in client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+
     uint8_t packet[MAX_PACKET_SIZE];
     uint64_t total_bytes = 0;
     uint64_t payload_bytes = 0;
@@ -106,13 +110,13 @@ void* udp_recv(void* args_ptr) {
     uint32_t corrupt_packets = 0;
     uint32_t last_seq = 0xFFFFFFFF;
     struct timespec first_ts = {0}, last_ts = {0};
-    struct timeval timeout;
-    timeout.tv_sec = 1;  // Set timeout to 1 second
-    timeout.tv_usec = 0;
+
+    struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
     while (1) {
-        
-        ssize_t bytes = recv(sock, packet, args->packet_size, 0);
+        ssize_t bytes = recvfrom(sock, packet, args->packet_size, 0,
+                                 (struct sockaddr*)&client_addr, &client_addr_len);
         if (bytes <= 0) break;
 
         struct timespec now_ts;
@@ -138,18 +142,21 @@ void* udp_recv(void* args_ptr) {
         total_bytes += bytes;
         payload_bytes += (bytes - sizeof(MiniIperfHeader));
         received_packets++;
+
         if (args->duration > 0) {
             double elapsed_sec = (now_ts.tv_sec - first_ts.tv_sec) +
                                  (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
             if (elapsed_sec >= args->duration) break;
         }
     }
-    double duration_sec = (last_ts.tv_sec - first_ts.tv_sec) +(last_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
+
+    double duration_sec = (last_ts.tv_sec - first_ts.tv_sec) +
+                          (last_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
 
     double throughput_mbps = (total_bytes * 8.0) / (duration_sec * 1e6);
     double goodput_mbps = (payload_bytes * 8.0) / (duration_sec * 1e6);
     double loss_pct = (last_seq + 1 - received_packets) * 100.0 / (last_seq + 1);
-    
+
     printf("UDP Statistics:\n");
     printf("Total Bytes: %.2f MB\n", total_bytes / 1e6);
     printf("Payload Bytes: %.2f MB\n", payload_bytes / 1e6);
@@ -163,6 +170,7 @@ void* udp_recv(void* args_ptr) {
     printf("End Time: %ld.%09ld\n", last_ts.tv_sec, last_ts.tv_nsec);
     printf("Last Sequence Number: %u\n", last_seq);
     printf("Last Timestamp: %ld.%09ld\n", last_ts.tv_sec, last_ts.tv_nsec);
+
     close(sock);
     return NULL;
 }
