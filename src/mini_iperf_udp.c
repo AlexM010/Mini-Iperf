@@ -1,7 +1,7 @@
 #include "mini_iperf.h"
 #include <errno.h>
 #include <poll.h>
-#define MAX_PACKET_SIZE 1024 // MTU-safe max size
+#define MAX_PACKET_SIZE 1460// MTU-safe max size
 char packet[MAX_PACKET_SIZE]; // stack buffer
 static uint32_t compute_crc32(const uint8_t* data, size_t len);
 void* udp_sendto(void* args_ptr) {
@@ -38,7 +38,10 @@ void* udp_sendto(void* args_ptr) {
 
     uint32_t seq = 0;
 
-
+    int bufsize = 256 * 1024 * 1024;
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
+        perror("setsockopt SO_SNDBUF failed");
+    }
     while (1) {
         struct timespec now_ts;
         clock_gettime(CLOCK_MONOTONIC, &now_ts);
@@ -66,8 +69,18 @@ void* udp_sendto(void* args_ptr) {
         header->crc32 = 0;
         header->crc32 = htonl(compute_crc32(packet, args->packet_size));
 
-        sendto(sock, packet, args->packet_size, 0,
+        ssize_t s = sendto(sock, packet, args->packet_size, MSG_DONTWAIT,
                (struct sockaddr*)&server_addr, sizeof(server_addr));
+        if (s < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                printf("a\n");
+                continue;
+            } else {
+                perror("sendto failed");
+                break;
+            }
+        }
+        
 
         if(args->bandwidth>0) {
            usleep((int)delay_usec);
