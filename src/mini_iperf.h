@@ -49,23 +49,39 @@
 };
 #define HEADER_SIZE 16  // Define fixed header size (adjust as needed)
 /**
+ * Structure to represent the custom header for Mini-Iperf
+ */
+typedef struct {
+  uint8_t type;           // Message type (e.g., START = 1, STOP = 2, STATS = 3, ACK = 4) - 1 B
+  uint8_t flags;          // Bitfield: [0]=delay mode, [1]=ack required, etc. - 1 B
+  uint16_t stream_id;     // Stream ID (for multithreading or per-stream sync) - 2 B
+  uint32_t packet_size;   // Size of UDP packet (bytes) - 4 B
+  uint32_t bandwidth;     // Target bandwidth (bps) - 4 B
+  uint32_t duration;      // Duration of the experiment (sec) - 4 B
+  uint32_t timestamp_sec; // For delay sync or logging - 4 B
+  uint32_t crc32;          // CRC32 checksum for error detection - 4 B
+  uint32_t sequence_number; // Sequence number for packet ordering - 4 B
+} MiniIperfHeader;
+
+/**
  * Structure to represent a data packet
  */
 typedef struct {
   MiniIperfHeader header; // Custom header for Mini-Iperf
   char payload[];         // Flexible array member for payload data
 } MiniIperfPacket;
+
+//total bytes = 16 B
+
 /**
- * Structure to represent the custom header for Mini-Iperf
+ * Enum for message types
  */
-typedef struct {
-    uint16_t source_port;   // 2 bytes
-    uint16_t dest_port;     // 2 bytes
-    uint32_t seq_number;    // 4 bytes
-    uint32_t ack_number;    // 4 bytes
-    uint16_t flags;         // 2 bytes (optional for control flags)
-    uint16_t checksum;      // 2 bytes (for error detection)
-} MiniIperfHeader;
+enum MessageType {
+  MSG_START = 1,
+  MSG_STOP = 2,
+  MSG_STATS = 3,
+  MSG_ACK = 4
+};
 
  /**
   * Initialize arguments structure with default values
@@ -124,6 +140,10 @@ int client_receive(int client_socket, char* buffer, int buffer_size);
 int client_close(int client_socket);
 void* client_channel_send(void* client_socket);
 void* client_channel_recv(void* client_socket);
+
+// UDP Channel Functions
+void *udp_sendto(void* args);
+void* udp_recv(void* args);
 
 
 

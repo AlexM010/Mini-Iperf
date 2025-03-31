@@ -13,6 +13,13 @@
 #include "mini_iperf.h"
 int client_socket=-1;
 
+
+/**
+ * @brief Connect to the server
+ * @param server_ip IP address of the server
+ * @param server_port Port number of the server
+ * @return Socket file descriptor on success, -1 on error
+ */
 int client_connect(const char* server_ip, int server_port){
 
     // Create a socket for the client
@@ -37,6 +44,8 @@ int client_connect(const char* server_ip, int server_port){
 
     return client_socket;
 }
+
+
 int client_send(int client_socket, const char* message, int message_size) {
     // Send the message to the server
     int bytes_sent = send(client_socket, message, message_size, 0);
@@ -47,6 +56,7 @@ int client_send(int client_socket, const char* message, int message_size) {
     printf("Sent %d bytes to the server\n", bytes_sent);
     return bytes_sent;
 }
+
 int client_receive(int client_socket, char* buffer, int buffer_size) {
     // Receive data from the server
     int bytes_received = recv(client_socket, buffer, buffer_size, 0);

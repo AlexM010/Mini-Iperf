@@ -20,6 +20,12 @@ extern int server_socket;
 int who = UNDEFINED;
 int line=0;
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_t server_recv_thread, server_send_thread,client_send_thread,client_recv_thread;
+pthread_t udp_sender_thread, udp_receiver_thread;
+/**
+ * Signal handler for SIGINT (Ctrl+C)
+ * @param sig Signal number
+ */
 
 void sigint_handler(int sig) {
     char c;
@@ -27,11 +33,19 @@ void sigint_handler(int sig) {
     c = getchar();
     if (c == 'y' || c == 'Y') {
         printf("Exiting...\n");
+        fflush(stdin);
+        
         if(who == SERVER){
+            pthread_kill(udp_receiver_thread,SIGKILL);
+            pthread_kill(server_recv_thread,SIGKILL);
+            pthread_kill(server_send_thread,SIGKILL);
             close(server_socket);
             close(client_socket);
         }
         else if(who == CLIENT)
+            pthread_kill(udp_sender_thread,SIGKILL);
+            pthread_kill(client_recv_thread,SIGKILL);
+            pthread_kill(client_send_thread,SIGKILL);
             close(client_socket);
 
         exit(0);
@@ -46,8 +60,8 @@ void sigint_handler(int sig) {
     signal(SIGINT, sigint_handler);
 
      if (parse_arguments(argc, argv, &args) != 0) {
-         free_arguments(&args);
-         return 1;
+        free_arguments(&args);
+        return 1;
      }
 
 
@@ -64,9 +78,9 @@ void sigint_handler(int sig) {
             free_arguments(&args);
             return 1;
         }
-        pthread_t server_recv_thread, server_send_thread;
         pthread_create(&server_recv_thread, NULL, server_channel_recv, (void*)&client_socket);
         pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&client_socket);
+        pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
         pthread_join(server_recv_thread, NULL);
         pthread_join(server_send_thread, NULL);
     } else if (args.is_client) {
@@ -76,9 +90,9 @@ void sigint_handler(int sig) {
             return 1;
         }
         who = CLIENT;
-        pthread_t client_send_thread,client_recv_thread;
         pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&client_socket);
         pthread_create(&client_send_thread, NULL, client_channel_send, (void*)&client_socket);
+        pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
         pthread_join(client_recv_thread, NULL);
         pthread_join(client_send_thread, NULL);
     }

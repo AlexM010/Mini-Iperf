@@ -15,6 +15,8 @@ void init_arguments(struct arguments* args) {
     args->num_streams = 1;       // Default single stream
     args->duration = -1;         // -1 means unlimited duration
     args->port = 5201;             // 5201 default port
+    args->bandwidth = 0;        // Default no bandwidth limit
+    args->wait_duration = 0;    // Default no wait duration
     // All other fields are initialized to 0/NULL by memset
 }
 
@@ -164,10 +166,7 @@ void init_arguments(struct arguments* args) {
             fprintf(stderr, "Error: Server address (-a) is required in client mode\n");
             return -1;
         }
-        if (!args->measure_delay && args->bandwidth <= 0) {
-            fprintf(stderr, "Error: Bandwidth (-b) is required for throughput measurement\n");
-            return -1;
-        }
+        
     }
 
     return 0;
