@@ -1,6 +1,7 @@
 #include "mini_iperf.h"
 #include <errno.h>
 #include <poll.h>
+#include <sched.h>
 #define MAX_PACKET_SIZE 1460// MTU-safe max size
 char packet[MAX_PACKET_SIZE]; // stack buffer
 static uint32_t compute_crc32(const uint8_t* data, size_t len);
@@ -17,19 +18,38 @@ void* udp_sendto(void* args_ptr) {
         return NULL;
     }
 
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(args->port + 1);  // UDP port is TCP+1
-    server_addr.sin_addr.s_addr = inet_addr(args->ip_address);
+    // Set massive send buffer
+    int bufsize = 128 * 1024 * 1024;  // 128MB
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
+        perror("setsockopt SO_SNDBUF failed");
+    }
 
-    // Calculate delay for throttling (in microseconds)
-    double delay_usec = (args->packet_size * 8.0 / args->bandwidth) * 1e6;
+    struct sockaddr_in server_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(args->port + 1),
+        .sin_addr.s_addr = inet_addr(args->ip_address)
+    };
 
-    // Create and fill the packet
-    uint8_t packet[MAX_PACKET_SIZE];
-    MiniIperfHeader* header = (MiniIperfHeader*)packet;
+    // Pre-fill a batch of packets
+    #define BATCH_SIZE 32
+    uint8_t packets[BATCH_SIZE][MAX_PACKET_SIZE];
     int payload_size = args->packet_size - sizeof(MiniIperfHeader);
-    uint8_t* payload = packet + sizeof(MiniIperfHeader);
+    
+    // Initialize all packets in the batch
+    for (int i = 0; i < BATCH_SIZE; i++) {
+        MiniIperfHeader* header = (MiniIperfHeader*)packets[i];
+        uint8_t* payload = packets[i] + sizeof(MiniIperfHeader);
+        
+        header->type = 0;
+        header->flags = args->measure_delay ? 1 : 0;
+        header->stream_id = htons(0);
+        header->packet_size = htonl(args->packet_size);
+        header->bandwidth = htonl(args->bandwidth);
+        header->duration = htonl(args->duration);
+        
+        // Fill payload with pattern (will be updated per send)
+        memset(payload, 'A', payload_size);
+    }
 
     if (args->wait_duration > 0) sleep(args->wait_duration);
 
@@ -37,59 +57,65 @@ void* udp_sendto(void* args_ptr) {
     clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
     uint32_t seq = 0;
+    double delay_usec = (args->packet_size * 8.0 / args->bandwidth) * 1e6;
 
-    int bufsize = 256 * 1024 * 1024;
-    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
-        perror("setsockopt SO_SNDBUF failed");
-    }
     while (1) {
         struct timespec now_ts;
         clock_gettime(CLOCK_MONOTONIC, &now_ts);
         double elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
-                             (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
+                           (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
 
         if (args->duration > 0 && elapsed_sec >= args->duration) break;
 
-        // Fill header
-        header->type = 0;
-        header->flags = args->measure_delay ? 1 : 0;
-        header->stream_id = htons(0);
-        header->packet_size = htonl(args->packet_size);
-        header->bandwidth = htonl(args->bandwidth);
-        header->duration = htonl(args->duration);
-        header->sequence_number = htonl(seq);
-        
-        // Fill payload
-        memset(payload, 'A' + (seq % 26), payload_size);
-        clock_gettime(CLOCK_MONOTONIC, &now_ts);
-        elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
-        (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
-        header->timestamp_sec = htonl(now_ts.tv_sec);
-        // Compute CRC over entire packet except the CRC field
-        header->crc32 = 0;
-        header->crc32 = htonl(compute_crc32(packet, args->packet_size));
+        // Send a batch of packets
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            MiniIperfHeader* header = (MiniIperfHeader*)packets[i];
+            uint8_t* payload = packets[i] + sizeof(MiniIperfHeader);
+            
+            // Update sequence-specific fields
+            header->sequence_number = htonl(seq + i);
+            memset(payload, 'A' + ((seq + i) % 26), payload_size);
+            
+            // Update timestamp and CRC
+            clock_gettime(CLOCK_MONOTONIC, &now_ts);
+            header->timestamp_sec = htonl(now_ts.tv_sec);
+            header->crc32 = 0;
+            header->crc32 = htonl(compute_crc32(packets[i], args->packet_size));
+        }
 
-        ssize_t s = sendto(sock, packet, args->packet_size, MSG_DONTWAIT,
-               (struct sockaddr*)&server_addr, sizeof(server_addr));
-        if (s < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                printf("a\n");
-                continue;
-            } else {
-                perror("sendto failed");
-                break;
+        // Send the entire batch
+        for (int i = 0; i < BATCH_SIZE; i++) {
+            ssize_t s = sendto(sock, packets[i], args->packet_size, 0,
+                             (struct sockaddr*)&server_addr, sizeof(server_addr));
+            if (s < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // Buffer full, wait a bit
+                    struct pollfd pfd = {.fd = sock, .events = POLLOUT};
+                    poll(&pfd, 1, 100);
+                    i--;  // Retry same packet
+                    continue;
+                } else {
+                    perror("sendto failed");
+                    close(sock);
+                    return NULL;
+                }
             }
         }
-        
 
-        if(args->bandwidth>0) {
-           usleep((int)delay_usec);
-        }
-        seq++;
-        if (args->duration > 0 && elapsed_sec >= args->duration) break;
+        seq += BATCH_SIZE;
         
+        // Throttle if needed
+        if (args->bandwidth > 0) {
+            usleep((int)(delay_usec * BATCH_SIZE));
+        }
+
+        // Check duration after each batch
+        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
+                     (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
+        if (args->duration > 0 && elapsed_sec >= args->duration) break;
     }
-    printf("Ended\n");
+
     close(sock);
     return NULL;
 }
@@ -99,12 +125,23 @@ void* udp_recv(void* args_ptr) {
         fprintf(stderr, "Packet size too large\n");
         return NULL;
     }
-
+    
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("UDP socket creation failed");
         return NULL;
     }
+    int bufsize = 128 * 1024 * 1024;  // 128MB
+    setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+    // In your receiver code, add these after socket creation:
+    int optval = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    int val = 1;
+setsockopt(sock, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
+
+    // Enable timestamping
+    setsockopt(sock, SOL_SOCKET, SO_TIMESTAMPNS, &optval, sizeof(optval));
 
     struct sockaddr_in server_addr = {
         .sin_family = AF_INET,
@@ -139,7 +176,7 @@ void* udp_recv(void* args_ptr) {
     struct timespec first_ts = {0}, last_ts = {0};
 
     while (1) {
-        int poll_res = poll(&fds, 1, 1); // 100ms timeout
+        int poll_res = poll(&fds, 1, 100); // 100ms timeout
 
         if (poll_res < 0) {
             perror("poll failed");
