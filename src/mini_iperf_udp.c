@@ -2,6 +2,8 @@
 #include <errno.h>
 #include <poll.h>
 #include <sched.h>
+#include <sys/types.h>
+#include <stdint.h>
 #define MAX_PACKET_SIZE 1460// MTU-safe max size
 char packet[MAX_PACKET_SIZE]; // stack buffer
 static uint32_t compute_crc32(const uint8_t* data, size_t len);
@@ -23,6 +25,9 @@ void* udp_sendto(void* args_ptr) {
     if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
         perror("setsockopt SO_SNDBUF failed");
     }
+    int optval = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NO_CHECK, &optval, sizeof(optval));  // Disable UDP checksum
+    setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &optval, sizeof(optval));  // Boost priority
 
     struct sockaddr_in server_addr = {
         .sin_family = AF_INET,
@@ -79,8 +84,6 @@ void* udp_sendto(void* args_ptr) {
             // Update timestamp and CRC
             clock_gettime(CLOCK_MONOTONIC, &now_ts);
             header->timestamp_sec = htonl(now_ts.tv_sec);
-            header->crc32 = 0;
-            header->crc32 = htonl(compute_crc32(packets[i], args->packet_size));
         }
 
         // Send the entire batch
@@ -91,7 +94,7 @@ void* udp_sendto(void* args_ptr) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     // Buffer full, wait a bit
                     struct pollfd pfd = {.fd = sock, .events = POLLOUT};
-                    poll(&pfd, 1, 100);
+                    poll(&pfd, 1, 500);
                     i--;  // Retry same packet
                     continue;
                 } else {
@@ -119,6 +122,7 @@ void* udp_sendto(void* args_ptr) {
     close(sock);
     return NULL;
 }
+int all_bytes_equal(const void *ptr, int c, size_t n);
 void* udp_recv(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;
     if (args->packet_size > MAX_PACKET_SIZE) {
@@ -131,17 +135,9 @@ void* udp_recv(void* args_ptr) {
         perror("UDP socket creation failed");
         return NULL;
     }
+    
     int bufsize = 128 * 1024 * 1024;  // 128MB
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
-    // In your receiver code, add these after socket creation:
-    int optval = 1;
-    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-    int val = 1;
-setsockopt(sock, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
-
-    // Enable timestamping
-    setsockopt(sock, SOL_SOCKET, SO_TIMESTAMPNS, &optval, sizeof(optval));
 
     struct sockaddr_in server_addr = {
         .sin_family = AF_INET,
@@ -155,11 +151,7 @@ setsockopt(sock, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
         return NULL;
     }
 
-    // Set up poll for the socket
-    struct pollfd fds;
-    fds.fd = sock;
-    fds.events = POLLIN;
-
+    struct pollfd fds = {.fd = sock, .events = POLLIN};
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
 
@@ -169,80 +161,86 @@ setsockopt(sock, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
     uint32_t received_packets = 0;
     uint32_t corrupt_packets = 0;
     uint32_t duplicate_or_out_of_order = 0;
-
     uint32_t expected_seq = 0;
     uint32_t lost_packets = 0;
 
     struct timespec first_ts = {0}, last_ts = {0};
+    int payload_size = args->packet_size - sizeof(MiniIperfHeader);
 
     while (1) {
-        int poll_res = poll(&fds, 1, 100); // 100ms timeout
+        int poll_res = poll(&fds, 1, 50); // 100ms timeout
 
         if (poll_res < 0) {
             perror("poll failed");
             break;
         } else if (poll_res == 0) {
-            // No data ready
+            // Timeout - check if we should exit
             if (args->duration > 0 && received_packets > 0) {
                 struct timespec now_ts;
                 clock_gettime(CLOCK_MONOTONIC, &now_ts);
                 double elapsed = (now_ts.tv_sec - first_ts.tv_sec) +
-                                 (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
+                               (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
                 if (elapsed >= args->duration) break;
             }
             continue;
         }
 
-        ssize_t bytes = recvfrom(sock, packet, args->packet_size, 0,
-                                 (struct sockaddr*)&client_addr, &client_addr_len);
+        ssize_t bytes = recvfrom(sock, packet, MAX_PACKET_SIZE, 0,
+                               (struct sockaddr*)&client_addr, &client_addr_len);
         if (bytes <= 0) break;
 
         struct timespec now_ts;
         clock_gettime(CLOCK_MONOTONIC, &now_ts);
 
-        MiniIperfHeader* header = (MiniIperfHeader*)packet;
-
-        // Verify CRC
-        uint32_t received_crc = ntohl(header->crc32);
-        header->crc32 = 0;
-        uint32_t computed_crc = compute_crc32(packet, args->packet_size);
-        if (received_crc != computed_crc) {
+        // Basic packet validation
+        if (bytes < sizeof(MiniIperfHeader)) {
             corrupt_packets++;
             continue;
         }
 
+        MiniIperfHeader* header = (MiniIperfHeader*)packet;
         uint32_t seq = ntohl(header->sequence_number);
+        uint8_t* payload = packet + sizeof(MiniIperfHeader);
+        int recv_payload_size = bytes - sizeof(MiniIperfHeader);
 
-        if (received_packets == 0) {
-            first_ts = now_ts;  // Start timing after first valid packet
+        // Verify payload pattern
+        uint8_t expected_char = 'A' + (seq % 26);
+        if (!all_bytes_equal(payload, expected_char, recv_payload_size)) {
+            corrupt_packets++;
+            continue;
         }
-        last_ts = now_ts;
 
-        // Track loss and order
-        if (seq == expected_seq) {
-            expected_seq++;
-        } else if (seq > expected_seq) {
-            lost_packets += (seq - expected_seq);
+        // Track sequence numbers
+        if (received_packets == 0) {
+            first_ts = now_ts;
             expected_seq = seq + 1;
         } else {
-            duplicate_or_out_of_order++;
-            lost_packets++; // treat as loss
+            if (seq == expected_seq) {
+                expected_seq++;
+            } else if (seq > expected_seq) {
+                lost_packets += (seq - expected_seq);
+                expected_seq = seq + 1;
+            } else {
+                duplicate_or_out_of_order++;
+            }
         }
 
+        last_ts = now_ts;
         total_bytes += bytes;
-        payload_bytes += (bytes - sizeof(MiniIperfHeader));
+        payload_bytes += recv_payload_size;
         received_packets++;
 
         if (args->duration > 0) {
             double elapsed_sec = (now_ts.tv_sec - first_ts.tv_sec) +
-                                 (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
+                               (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
             if (elapsed_sec >= args->duration) break;
         }
     }
 
+    // Calculate statistics
     double duration_sec = (last_ts.tv_sec - first_ts.tv_sec) +
-                          (last_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
-    if (duration_sec <= 0) duration_sec = 0.001; // avoid divide-by-zero
+                         (last_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
+    if (duration_sec <= 0) duration_sec = 0.001;
 
     double throughput_mbps = (total_bytes * 8.0) / (duration_sec * 1e6);
     double goodput_mbps = (payload_bytes * 8.0) / (duration_sec * 1e6);
@@ -258,22 +256,33 @@ setsockopt(sock, SOL_SOCKET, SO_ZEROCOPY, &val, sizeof(val));
     printf("Lost Packets:       %u (%.2f%%)\n", lost_packets, loss_pct);
     printf("Throughput:         %.2f Mbps\n", throughput_mbps);
     printf("Goodput:            %.2f Mbps\n", goodput_mbps);
-    printf("Start Time:         %ld.%09ld\n", first_ts.tv_sec, first_ts.tv_nsec);
-    printf("End Time:           %ld.%09ld\n", last_ts.tv_sec, last_ts.tv_nsec);
-    printf("Last Sequence #:    %u\n", expected_seq - 1);
     printf("============================\n");
 
     close(sock);
     return NULL;
 }
-
-
-static uint32_t compute_crc32(const uint8_t* data, size_t len) {
-    uint32_t crc = ~0U;
-    for (size_t i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+int all_bytes_equal(const void *ptr, int c, size_t n) {
+    const unsigned char *p = ptr;
+    const unsigned long pattern = 0x0101010101010101UL * (unsigned char)c;
+    const unsigned long *lp;
+    
+    // Check initial bytes until aligned
+    for (; (uintptr_t)p % sizeof(unsigned long) != 0 && n > 0; n--, p++) {
+        if (*p != c) return 0;
     }
-    return ~crc;
+    
+    // Compare word-sized chunks
+    lp = (const unsigned long *)p;
+    while (n >= sizeof(unsigned long)) {
+        if (*lp++ != pattern) return 0;
+        n -= sizeof(unsigned long);
+    }
+    
+    // Compare remaining bytes
+    p = (const unsigned char *)lp;
+    while (n-- > 0) {
+        if (*p++ != c) return 0;
+    }
+    
+    return 1;
 }

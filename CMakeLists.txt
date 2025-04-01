@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.10)
 
 project(mini_iperf C)
 
-set(CMAKE_C_STANDARD 99)
-
+set(CMAKE_C_STANDARD 11)
+add_definitions(-D_GNU_SOURCE)
 # Add source files
 file(GLOB SOURCES "src/*.c")
 
