@@ -52,22 +52,27 @@
  * Structure to represent the custom header for Mini-Iperf
  */
 typedef struct {
-  uint8_t type;           // Message type (e.g., START = 1, STOP = 2, STATS = 3, ACK = 4) - 1 B
-  uint8_t flags;          // Bitfield: [0]=delay mode, [1]=ack required, etc. - 1 B
-  uint16_t stream_id;     // Stream ID (for multithreading or per-stream sync) - 2 B
-  uint32_t packet_size;   // Size of UDP packet (bytes) - 4 B
-  uint32_t bandwidth;     // Target bandwidth (bps) - 4 B
-  uint32_t duration;      // Duration of the experiment (sec) - 4 B
-  uint32_t timestamp_sec; // For delay sync or logging - 4 B
-  uint32_t sequence_number; // Sequence number for packet ordering - 4 B
-} MiniIperfHeader;
+  uint8_t     msg_type;       // Message type (e.g., START_EXP = 0x01, STOP_EXP = 0x02)
+  uint32_t    payload_len;    // Length of the payload (in bytes)
+  uint16_t    crc;            // Checksum for integrity verification
+  uint32_t    seq_num;        // Sequence number (optional, for multi-part messages)
+  // Reserved fields (if needed)
+} __attribute__((packed)) tcp_header_t;
+/**
+ * Structure to represent the custom header for Mini-Iperf
+ */
+typedef struct {
+  uint32_t    seq_num;        // Sequence number (for loss detection)
+  uint64_t    timestamp_ns;   // Monotonic clock timestamp (CLOCK_MONOTONIC)
+  // Optional: Add fields for OWD (if clocks are synced via NTP/PTP)
+} __attribute__((packed)) MiniIperfHeader;
 
 /**
  * Structure to represent a data packet
  */
 typedef struct {
   MiniIperfHeader header; // Custom header for Mini-Iperf
-  char payload[];         // Flexible array member for payload data
+  char payload[1460];         // Flexible array member for payload data
 } MiniIperfPacket;
 
 //total bytes = 16 B

@@ -1,12 +1,29 @@
 #include "mini_iperf.h"
 #include <errno.h>
 #include <poll.h>
-#include <sched.h>
-#include <sys/types.h>
-#include <stdint.h>
-#define MAX_PACKET_SIZE 1460// MTU-safe max size
-char packet[MAX_PACKET_SIZE]; // stack buffer
-static uint32_t compute_crc32(const uint8_t* data, size_t len);
+#include <time.h>
+#include <math.h>
+#include <time.h>
+
+#define MAX_PACKET_SIZE 1460  // MTU-safe max size
+#define BATCH_SIZE 32
+#define NS_PER_SEC 1000000000L
+
+// Utility function to check if all bytes in buffer match expected value
+static int all_bytes_equal(const void *ptr, int c, size_t n) {
+    const unsigned char *p = ptr;
+    while (n-- > 0) if (*p++ != c) return 0;
+    return 1;
+}
+
+// Get current monotonic time in nanoseconds
+static uint64_t get_monotonic_time() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * NS_PER_SEC + ts.tv_nsec;
+}
+
+// UDP Sender Thread
 void* udp_sendto(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;
     if (args->packet_size > MAX_PACKET_SIZE) {
@@ -19,15 +36,13 @@ void* udp_sendto(void* args_ptr) {
         perror("UDP socket creation failed");
         return NULL;
     }
-
-    // Set massive send buffer
+    // Optimize socket settings
     int bufsize = 128 * 1024 * 1024;  // 128MB
-    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize)) < 0) {
-        perror("setsockopt SO_SNDBUF failed");
-    }
+    setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
     int optval = 1;
-    setsockopt(sock, SOL_SOCKET, SO_NO_CHECK, &optval, sizeof(optval));  // Disable UDP checksum
-    setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &optval, sizeof(optval));  // Boost priority
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    int prio = 6; // Higher priority
+    setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &prio, sizeof(prio));
 
     struct sockaddr_in server_addr = {
         .sin_family = AF_INET,
@@ -35,109 +50,110 @@ void* udp_sendto(void* args_ptr) {
         .sin_addr.s_addr = inet_addr(args->ip_address)
     };
 
-    // Pre-fill a batch of packets
-    #define BATCH_SIZE 32
-    uint8_t packets[BATCH_SIZE][MAX_PACKET_SIZE];
-    int payload_size = args->packet_size - sizeof(MiniIperfHeader);
-    
-    // Initialize all packets in the batch
+    // Calculate payload size and validate
+    const int payload_size = args->packet_size - sizeof(MiniIperfHeader);
+    if (payload_size <= 0) {
+        fprintf(stderr, "Invalid packet size (must be > %zu)\n", sizeof(MiniIperfHeader));
+        close(sock);
+        return NULL;
+    }
+
+    // Pre-fill packet batch
+    MiniIperfPacket* batch = malloc(BATCH_SIZE * sizeof(MiniIperfPacket));
+    if (!batch) {
+        perror("malloc failed");
+        close(sock);
+        return NULL;
+    }
+
     for (int i = 0; i < BATCH_SIZE; i++) {
-        MiniIperfHeader* header = (MiniIperfHeader*)packets[i];
-        uint8_t* payload = packets[i] + sizeof(MiniIperfHeader);
-        
-        header->type = 0;
-        header->flags = args->measure_delay ? 1 : 0;
-        header->stream_id = htons(0);
-        header->packet_size = htonl(args->packet_size);
-        header->bandwidth = htonl(args->bandwidth);
-        header->duration = htonl(args->duration);
-        
-        // Fill payload with pattern (will be updated per send)
-        memset(payload, 'A', payload_size);
+        MiniIperfHeader* header = &batch[i].header;
+        header->seq_num = 0;
+        header->timestamp_ns = 0;
+        memset(batch[i].payload, 'A', payload_size);
     }
 
     if (args->wait_duration > 0) sleep(args->wait_duration);
 
-    struct timespec start_ts;
-    clock_gettime(CLOCK_MONOTONIC, &start_ts);
-
+    const uint64_t start_time = get_monotonic_time();
     uint32_t seq = 0;
-    double delay_usec = (args->packet_size * 8.0 / args->bandwidth) * 1e6;
+    const double packet_bits = args->packet_size * 8.0;
+    const double delay_ns = (packet_bits / args->bandwidth) * 1e9 * BATCH_SIZE;
 
     while (1) {
-        struct timespec now_ts;
-        clock_gettime(CLOCK_MONOTONIC, &now_ts);
-        double elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
-                           (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
+        const uint64_t current_time = get_monotonic_time();
+        const double elapsed_sec = (current_time - start_time) / (double)NS_PER_SEC;
 
+        // Check experiment duration
         if (args->duration > 0 && elapsed_sec >= args->duration) break;
 
-        // Send a batch of packets
+        // Update batch with current sequence numbers and timestamps
         for (int i = 0; i < BATCH_SIZE; i++) {
-            MiniIperfHeader* header = (MiniIperfHeader*)packets[i];
-            uint8_t* payload = packets[i] + sizeof(MiniIperfHeader);
+            MiniIperfHeader* header = &batch[i].header;
+            header->seq_num = htonl(seq + i);
+            header->timestamp_ns = get_monotonic_time();
             
-            // Update sequence-specific fields
-            header->sequence_number = htonl(seq + i);
-            memset(payload, 'A' + ((seq + i) % 26), payload_size);
-            
-            // Update timestamp and CRC
-            clock_gettime(CLOCK_MONOTONIC, &now_ts);
-            header->timestamp_sec = htonl(now_ts.tv_sec);
+            // Update payload pattern
+            memset(batch[i].payload, 'A' + ((seq + i) % 26), payload_size);
         }
 
-        // Send the entire batch
+        // Send batch with error handling
         for (int i = 0; i < BATCH_SIZE; i++) {
-            ssize_t s = sendto(sock, packets[i], args->packet_size, 0,
-                             (struct sockaddr*)&server_addr, sizeof(server_addr));
-            if (s < 0) {
+            ssize_t sent = sendto(sock, &batch[i], args->packet_size, 0,
+                                 (struct sockaddr*)&server_addr, sizeof(server_addr));
+            if (sent < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // Buffer full, wait a bit
                     struct pollfd pfd = {.fd = sock, .events = POLLOUT};
-                    poll(&pfd, 1, 500);
+                    poll(&pfd, 1, 300);
                     i--;  // Retry same packet
                     continue;
-                } else {
-                    perror("sendto failed");
-                    close(sock);
-                    return NULL;
                 }
+                perror("UDP sendto failed");
+                free(batch);
+                close(sock);
+                return NULL;
             }
         }
-
         seq += BATCH_SIZE;
-        
-        // Throttle if needed
-        if (args->bandwidth > 0) {
-            usleep((int)(delay_usec * BATCH_SIZE));
-        }
 
-        // Check duration after each batch
-        clock_gettime(CLOCK_MONOTONIC, &now_ts);
-        elapsed_sec = (now_ts.tv_sec - start_ts.tv_sec) +
-                     (now_ts.tv_nsec - start_ts.tv_nsec) / 1e9;
-        if (args->duration > 0 && elapsed_sec >= args->duration) break;
+        // Throttle if bandwidth limited
+        if (args->bandwidth > 0) {
+            const uint64_t target_time = start_time + (uint64_t)((seq * packet_bits / args->bandwidth) * 1e9);
+            const uint64_t now = get_monotonic_time();
+            if (target_time > now) {
+                struct timespec delay = {
+                    .tv_sec = (target_time - now) / NS_PER_SEC,
+                    .tv_nsec = (target_time - now) % NS_PER_SEC
+                };
+                nanosleep(&delay, NULL);
+            }
+        }
     }
 
+    free(batch);
     close(sock);
     return NULL;
 }
-int all_bytes_equal(const void *ptr, int c, size_t n);
+
+// UDP Receiver Thread
 void* udp_recv(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;
     if (args->packet_size > MAX_PACKET_SIZE) {
         fprintf(stderr, "Packet size too large\n");
         return NULL;
     }
-    
+ 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("UDP socket creation failed");
         return NULL;
     }
     
-    int bufsize = 128 * 1024 * 1024;  // 128MB
+    // Optimize socket settings
+    int bufsize = 256 * 1024 * 1024;  // 128MB
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
+    int prio = 6; // Higher priority
+    setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &prio, sizeof(prio));
 
     struct sockaddr_in server_addr = {
         .sin_family = AF_INET,
@@ -151,138 +167,116 @@ void* udp_recv(void* args_ptr) {
         return NULL;
     }
 
-    struct pollfd fds = {.fd = sock, .events = POLLIN};
+    // Statistics tracking
+    struct {
+        uint64_t total_bytes;
+        uint64_t payload_bytes;
+        uint32_t received_packets;
+        uint32_t corrupt_packets;
+        uint32_t out_of_order;
+        uint32_t lost_packets;
+        uint32_t expected_seq;
+        uint64_t first_ts;
+        uint64_t last_ts;
+    } stats = {0};
+
+    MiniIperfPacket packet;
     struct sockaddr_in client_addr;
-    socklen_t client_addr_len = sizeof(client_addr);
-
-    uint8_t packet[MAX_PACKET_SIZE];
-    uint64_t total_bytes = 0;
-    uint64_t payload_bytes = 0;
-    uint32_t received_packets = 0;
-    uint32_t corrupt_packets = 0;
-    uint32_t duplicate_or_out_of_order = 0;
-    uint32_t expected_seq = 0;
-    uint32_t lost_packets = 0;
-
-    struct timespec first_ts = {0}, last_ts = {0};
-    int payload_size = args->packet_size - sizeof(MiniIperfHeader);
+    socklen_t addr_len = sizeof(client_addr);
 
     while (1) {
-        int poll_res = poll(&fds, 1, 50); // 100ms timeout
-
-        if (poll_res < 0) {
+        struct pollfd pfd = {.fd = sock, .events = POLLIN};
+        int ready = poll(&pfd, 1, 10);  // 100ms timeout
+        
+        if (ready < 0) {
             perror("poll failed");
             break;
-        } else if (poll_res == 0) {
+        } else if (ready == 0) {
             // Timeout - check if we should exit
-            if (args->duration > 0 && received_packets > 0) {
-                struct timespec now_ts;
-                clock_gettime(CLOCK_MONOTONIC, &now_ts);
-                double elapsed = (now_ts.tv_sec - first_ts.tv_sec) +
-                               (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
+            if (args->duration > 0 && stats.received_packets > 0) {
+                const double elapsed = (get_monotonic_time() - stats.first_ts) / (double)NS_PER_SEC;
                 if (elapsed >= args->duration) break;
             }
             continue;
         }
 
-        ssize_t bytes = recvfrom(sock, packet, MAX_PACKET_SIZE, 0,
-                               (struct sockaddr*)&client_addr, &client_addr_len);
+        // Receive packet
+        ssize_t bytes = recvfrom(sock, &packet, sizeof(packet), 0,
+                               (struct sockaddr*)&client_addr, &addr_len);
         if (bytes <= 0) break;
 
-        struct timespec now_ts;
-        clock_gettime(CLOCK_MONOTONIC, &now_ts);
+        const uint64_t recv_time = get_monotonic_time();
 
-        // Basic packet validation
+        // Validate packet
         if (bytes < sizeof(MiniIperfHeader)) {
-            corrupt_packets++;
+            stats.corrupt_packets++;
             continue;
         }
 
-        MiniIperfHeader* header = (MiniIperfHeader*)packet;
-        uint32_t seq = ntohl(header->sequence_number);
-        uint8_t* payload = packet + sizeof(MiniIperfHeader);
-        int recv_payload_size = bytes - sizeof(MiniIperfHeader);
+        const uint32_t seq = ntohl(packet.header.seq_num);
+        const int payload_size = bytes - sizeof(MiniIperfHeader);
+        const uint8_t expected_char = 'A' + (seq % 26);
 
-        // Verify payload pattern
-        uint8_t expected_char = 'A' + (seq % 26);
-        if (!all_bytes_equal(payload, expected_char, recv_payload_size)) {
-            corrupt_packets++;
+       // Replace the full payload check with sampling
+    if (payload_size > 64) {
+        // Only check first/last 8 bytes to reduce CPU load
+        if (!all_bytes_equal(packet.payload, expected_char, 8) || 
+            !all_bytes_equal(packet.payload + payload_size - 8, expected_char, 8)) {
+            stats.corrupt_packets++;
             continue;
         }
+    } else {
+        if (!all_bytes_equal(packet.payload, expected_char, payload_size)) {
+            stats.corrupt_packets++;
+            continue;
+        }
+    }
 
-        // Track sequence numbers
-        if (received_packets == 0) {
-            first_ts = now_ts;
-            expected_seq = seq + 1;
+        // Update sequence tracking
+        if (stats.received_packets == 0) {
+            stats.first_ts = recv_time;
+            stats.expected_seq = seq + 1;
         } else {
-            if (seq == expected_seq) {
-                expected_seq++;
-            } else if (seq > expected_seq) {
-                lost_packets += (seq - expected_seq);
-                expected_seq = seq + 1;
+            if (seq == stats.expected_seq) {
+                stats.expected_seq++;
+            } else if (seq > stats.expected_seq) {
+                stats.lost_packets += (seq - stats.expected_seq);
+                stats.expected_seq = seq + 1;
             } else {
-                duplicate_or_out_of_order++;
+                stats.out_of_order++;
             }
         }
 
-        last_ts = now_ts;
-        total_bytes += bytes;
-        payload_bytes += recv_payload_size;
-        received_packets++;
+        // Update statistics
+        stats.last_ts = recv_time;
+        stats.total_bytes += bytes;
+        stats.payload_bytes += payload_size;
+        stats.received_packets++;
 
+        // Check experiment duration
         if (args->duration > 0) {
-            double elapsed_sec = (now_ts.tv_sec - first_ts.tv_sec) +
-                               (now_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
-            if (elapsed_sec >= args->duration) break;
+            const double elapsed = (recv_time - stats.first_ts) / (double)NS_PER_SEC;
+            if (elapsed >= args->duration) break;
         }
     }
 
-    // Calculate statistics
-    double duration_sec = (last_ts.tv_sec - first_ts.tv_sec) +
-                         (last_ts.tv_nsec - first_ts.tv_nsec) / 1e9;
-    if (duration_sec <= 0) duration_sec = 0.001;
-
-    double throughput_mbps = (total_bytes * 8.0) / (duration_sec * 1e6);
-    double goodput_mbps = (payload_bytes * 8.0) / (duration_sec * 1e6);
-    double loss_pct = (expected_seq > 0) ? (double)lost_packets * 100.0 / expected_seq : 0.0;
+    // Calculate final statistics
+    double duration_sec = (stats.last_ts - stats.first_ts) / (double)NS_PER_SEC;
+    if (duration_sec <= 0) duration_sec = 1e-9;
 
     printf("\n=== UDP Statistics ===\n");
-    printf("Duration:           %.3f sec\n", duration_sec);
-    printf("Total Bytes:        %.2f MB\n", total_bytes / 1e6);
-    printf("Payload Bytes:      %.2f MB\n", payload_bytes / 1e6);
-    printf("Received Packets:   %u\n", received_packets);
-    printf("Corrupt Packets:    %u\n", corrupt_packets);
-    printf("Out-of-order/Dupes: %u\n", duplicate_or_out_of_order);
-    printf("Lost Packets:       %u (%.2f%%)\n", lost_packets, loss_pct);
-    printf("Throughput:         %.2f Mbps\n", throughput_mbps);
-    printf("Goodput:            %.2f Mbps\n", goodput_mbps);
-    printf("============================\n");
+    printf("Duration:        %.3f sec\n", duration_sec);
+    printf("Total Bytes:     %.2f MB\n", stats.total_bytes / 1e6);
+    printf("Payload Bytes:   %.2f MB\n", stats.payload_bytes / 1e6);
+    printf("Valid Packets:   %u\n", stats.received_packets);
+    printf("Corrupt Packets: %u\n", stats.corrupt_packets);
+    printf("Out-of-Order:    %u\n", stats.out_of_order);
+    printf("Lost Packets:    %u (%.2f%%)\n", stats.lost_packets,
+           stats.expected_seq > 0 ? 100.0 * stats.lost_packets / stats.expected_seq : 0.0);
+    printf("Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
+    printf("Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
+    printf("========================\n");
 
     close(sock);
     return NULL;
-}
-int all_bytes_equal(const void *ptr, int c, size_t n) {
-    const unsigned char *p = ptr;
-    const unsigned long pattern = 0x0101010101010101UL * (unsigned char)c;
-    const unsigned long *lp;
-    
-    // Check initial bytes until aligned
-    for (; (uintptr_t)p % sizeof(unsigned long) != 0 && n > 0; n--, p++) {
-        if (*p != c) return 0;
-    }
-    
-    // Compare word-sized chunks
-    lp = (const unsigned long *)p;
-    while (n >= sizeof(unsigned long)) {
-        if (*lp++ != pattern) return 0;
-        n -= sizeof(unsigned long);
-    }
-    
-    // Compare remaining bytes
-    p = (const unsigned char *)lp;
-    while (n-- > 0) {
-        if (*p++ != c) return 0;
-    }
-    
-    return 1;
 }
