@@ -150,7 +150,7 @@ void* udp_recv(void* args_ptr) {
     }
     
     // Optimize socket settings
-    int bufsize = 256 * 1024 * 1024;  // 128MB
+    int bufsize = 256 * 1024 * 1024;  // 256MB
     setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
     int prio = 6; // Higher priority
     setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &prio, sizeof(prio));
@@ -167,7 +167,7 @@ void* udp_recv(void* args_ptr) {
         return NULL;
     }
 
-    // Statistics tracking
+    // Statistics tracking with improved jitter measurement
     struct {
         uint64_t total_bytes;
         uint64_t payload_bytes;
@@ -178,7 +178,24 @@ void* udp_recv(void* args_ptr) {
         uint32_t expected_seq;
         uint64_t first_ts;
         uint64_t last_ts;
+        
+        // Jitter calculation variables
+        uint64_t last_arrival_ns;       // Last packet arrival time
+        double *jitter_samples;         // Array to store inter-arrival differences
+        int jitter_samples_count;       // Number of samples collected
+        int jitter_samples_capacity;    // Size of jitter_samples array
+        double jitter_sum;              // Sum of all jitter values
+        double jitter_sum_squares;      // Sum of squares for stddev calculation
     } stats = {0};
+
+    // Initialize jitter samples array
+    stats.jitter_samples_capacity = 100000; // Adjust based on expected packet count
+    stats.jitter_samples = malloc(stats.jitter_samples_capacity * sizeof(double));
+    if (!stats.jitter_samples) {
+        perror("Failed to allocate jitter tracking array");
+        close(sock);
+        return NULL;
+    }
 
     MiniIperfPacket packet;
     struct sockaddr_in client_addr;
@@ -186,7 +203,7 @@ void* udp_recv(void* args_ptr) {
 
     while (1) {
         struct pollfd pfd = {.fd = sock, .events = POLLIN};
-        int ready = poll(&pfd, 1, 10);  // 100ms timeout
+        int ready = poll(&pfd, 1, 10);  // 10ms timeout
         
         if (ready < 0) {
             perror("poll failed");
@@ -217,26 +234,42 @@ void* udp_recv(void* args_ptr) {
         const int payload_size = bytes - sizeof(MiniIperfHeader);
         const uint8_t expected_char = 'A' + (seq % 26);
 
-       // Replace the full payload check with sampling
-    if (payload_size > 64) {
-        // Only check first/last 8 bytes to reduce CPU load
-        if (!all_bytes_equal(packet.payload, expected_char, 8) || 
-            !all_bytes_equal(packet.payload + payload_size - 8, expected_char, 8)) {
-            stats.corrupt_packets++;
-            continue;
+        // Replace the full payload check with sampling
+        if (payload_size > 64) {
+            // Only check first/last 8 bytes to reduce CPU load
+            if (!all_bytes_equal(packet.payload, expected_char, 8) || 
+                !all_bytes_equal(packet.payload + payload_size - 8, expected_char, 8)) {
+                stats.corrupt_packets++;
+                continue;
+            }
+        } else {
+            if (!all_bytes_equal(packet.payload, expected_char, payload_size)) {
+                stats.corrupt_packets++;
+                continue;
+            }
         }
-    } else {
-        if (!all_bytes_equal(packet.payload, expected_char, payload_size)) {
-            stats.corrupt_packets++;
-            continue;
-        }
-    }
 
         // Update sequence tracking
         if (stats.received_packets == 0) {
             stats.first_ts = recv_time;
             stats.expected_seq = seq + 1;
+            stats.last_arrival_ns = recv_time;
         } else {
+            // Calculate and store inter-arrival time (jitter)
+            uint64_t delta_ns = recv_time - stats.last_arrival_ns;
+            double delta_ms = delta_ns / 1e6; // Convert to milliseconds
+            
+            // Store jitter sample if we have space
+            if (stats.jitter_samples_count < stats.jitter_samples_capacity) {
+                stats.jitter_samples[stats.jitter_samples_count++] = delta_ms;
+                stats.jitter_sum += delta_ms;
+                stats.jitter_sum_squares += delta_ms * delta_ms;
+            }
+            
+            // Update for next calculation
+            stats.last_arrival_ns = recv_time;
+            
+            // Handle sequence numbers
             if (seq == stats.expected_seq) {
                 stats.expected_seq++;
             } else if (seq > stats.expected_seq) {
@@ -275,8 +308,24 @@ void* udp_recv(void* args_ptr) {
            stats.expected_seq > 0 ? 100.0 * stats.lost_packets / stats.expected_seq : 0.0);
     printf("Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
     printf("Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
+    
+    // Calculate jitter statistics
+    if (stats.jitter_samples_count > 1) {
+        double mean_jitter = stats.jitter_sum / stats.jitter_samples_count;
+        
+        // Calculate standard deviation
+        double variance = (stats.jitter_sum_squares / stats.jitter_samples_count) - 
+                         (mean_jitter * mean_jitter);
+        double stddev = sqrt(variance > 0 ? variance : 0);
+        
+        printf("Avg Jitter:      %.3f ms\n", mean_jitter);
+        printf("Jitter Std Dev:  %.3f ms\n", stddev);
+    }
+    
     printf("========================\n");
 
+    // Clean up
+    free(stats.jitter_samples);
     close(sock);
     return NULL;
 }
