@@ -47,7 +47,7 @@
     int measure_delay;      // -d: Flag for delay measurement mode
     int wait_duration;      // -w: Wait duration before transmission
 };
-#define HEADER_SIZE 16  // Define fixed header size (adjust as needed)
+#define HEADER_SIZE 24  // Define fixed header size (adjust as needed)
 /**
  * Structure to represent the custom header for Mini-Iperf
  */
@@ -59,7 +59,6 @@ typedef struct {
   uint32_t bandwidth;     // Target bandwidth (bps) - 4 B
   uint32_t duration;      // Duration of the experiment (sec) - 4 B
   uint32_t timestamp_sec; // For delay sync or logging - 4 B
-  uint32_t crc32;          // CRC32 checksum for error detection - 4 B
   uint32_t sequence_number; // Sequence number for packet ordering - 4 B
 } MiniIperfHeader;
 
