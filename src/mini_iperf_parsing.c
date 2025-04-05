@@ -227,3 +227,27 @@ void print_arguments(const struct arguments* args) {
     printf("  -d              Measure one-way delay instead of throughput\n");
     printf("  -w <seconds>    Wait time before transmission (default: 0)\n");
 }
+
+int send_tcp_message(int sock, uint8_t msg_type, const void* payload, uint32_t payload_len) {
+    tcp_header_t header = {
+        .msg_type = msg_type,
+        .payload_len = payload_len,
+        .timestamp_ns = get_monotonic_time()
+    };
+    
+    // Send header
+    if (send(sock, &header, sizeof(header), 0) < 0) {
+        perror("TCP header send failed");
+        return -1;
+    }
+    
+    // Send payload if exists
+    if (payload_len > 0 && payload != NULL) {
+        if (send(sock, payload, payload_len, 0) < 0) {
+            perror("TCP payload send failed");
+            return -1;
+        }
+    }
+    
+    return 0;
+}

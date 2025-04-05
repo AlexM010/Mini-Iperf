@@ -1,14 +1,10 @@
 #include "mini_iperf.h"
-#include <errno.h>
-#include <poll.h>
-#include <time.h>
-#include <math.h>
-#include <time.h>
+
 
 #define MAX_PACKET_SIZE 1460  // MTU-safe max size
 #define BATCH_SIZE 32
 #define NS_PER_SEC 1000000000L
-
+extern volatile sig_atomic_t stop_flag;
 // Utility function to check if all bytes in buffer match expected value
 static int all_bytes_equal(const void *ptr, int c, size_t n) {
     const unsigned char *p = ptr;
@@ -80,7 +76,7 @@ void* udp_sendto(void* args_ptr) {
     const double packet_bits = args->packet_size * 8.0;
     const double delay_ns = (packet_bits / args->bandwidth) * 1e9 * BATCH_SIZE;
 
-    while (1) {
+    while (stop_flag) {
         const uint64_t current_time = get_monotonic_time();
         const double elapsed_sec = (current_time - start_time) / (double)NS_PER_SEC;
 
@@ -201,7 +197,7 @@ void* udp_recv(void* args_ptr) {
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
-    while (1) {
+    while (stop_flag) {
         struct pollfd pfd = {.fd = sock, .events = POLLIN};
         int ready = poll(&pfd, 1, 10);  // 10ms timeout
         
@@ -212,7 +208,7 @@ void* udp_recv(void* args_ptr) {
             // Timeout - check if we should exit
             if (args->duration > 0 && stats.received_packets > 0) {
                 const double elapsed = (get_monotonic_time() - stats.first_ts) / (double)NS_PER_SEC;
-                if (elapsed >= args->duration) break;
+                
             }
             continue;
         }
@@ -289,7 +285,6 @@ void* udp_recv(void* args_ptr) {
         // Check experiment duration
         if (args->duration > 0) {
             const double elapsed = (recv_time - stats.first_ts) / (double)NS_PER_SEC;
-            if (elapsed >= args->duration) break;
         }
     }
 

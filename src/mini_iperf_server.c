@@ -15,6 +15,7 @@
 #include "mini_iperf.h"
 
 int server_socket=-1;
+extern volatile sig_atomic_t stop_flag;
 
 int server_start(const char* ip, int port) {
     // Create a socket for the server
@@ -101,41 +102,58 @@ int server_close(int server_socket) {
 }
 
 
-//read from getline and send to client
-void* server_channel_send(void* client_socket) {
-    char* buffer = NULL;
-    size_t len = 0;
-    ssize_t read;
-
-    while ((read = getline(&buffer, &len, stdin)) != -1) {
-        if (send(*(int*)client_socket, buffer, read, 0) < 0) {
-            free(buffer);
-            server_close(server_socket);
-            return NULL;
-        }
-    }
-    free(buffer);
-    return NULL;
-}
-
-//this is a thread function server receive (server socket)
 void* server_channel_recv(void* client_socket) {
-    char buffer[1024];
+    int sock = *(int*)client_socket;
+    tcp_header_t header;
+    int64_t clock_offset = 0;
 
     while (1) {
-        int bytes_received = recv(*(int*)client_socket, buffer, sizeof(buffer), 0);
-        if (bytes_received < 0) {
-            perror("Error: Receive failed");
-            break;
-        } else if (bytes_received == 0) {
-            printf("Connection closed by client\n");
-            exit(0);
-            break;
+        // Receive header
+        if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
+            break; // Client disconnected
         }
-        buffer[bytes_received] = '\0';
-        safe_print(buffer);
+
+        switch (header.msg_type) {
+            case MSG_SYNC: {
+                // Clock synchronization
+                uint64_t t2 = get_monotonic_time();
+                send_tcp_message(sock, MSG_SYNC_RESP, &header.timestamp_ns, sizeof(uint64_t));
+                break;
+            }
+            
+            case MSG_START_EXP: {
+                printf("Experiment started by client\n");
+                stop_flag=1;
+                break;
+            }
+            
+            case MSG_STOP_EXP: {
+                printf("Experiment stopped by client\n");
+                stop_flag=0;
+                break;
+            }
+            
+            default:
+                printf("Unknown message type: %d\n", header.msg_type);
+        }
     }
+    
+    printf("Client disconnected\n");
     return NULL;
 }
 
-
+void* server_channel_send(void* client_socket) {
+    // This thread can now be used for:
+    // 1. Periodic statistics reporting
+    // 2. Unsolicited server notifications
+    // 3. Keepalive messages
+    
+    int sock = *(int*)client_socket;
+    
+    while (1) {
+        sleep(1); // Example: Send periodic updates every second
+        // You can add periodic reporting here if needed
+    }
+    
+    return NULL;
+}

@@ -12,7 +12,7 @@
  */
 #include "mini_iperf.h"
 int client_socket=-1;
-
+extern int duration;
 
 /**
  * @brief Connect to the server
@@ -79,38 +79,61 @@ int client_close(int client_socket) {
     return 0;
 }
 
-//read from getline and send to server
-void* client_channel_send(void* client_socket){
-    char* buffer = NULL;
-    size_t len = 0;
-    ssize_t read;
+void* client_channel_recv(void* client_socket) {
+    int sock = *(int*)client_socket;
+    tcp_header_t header;
+    int64_t clock_offset = 0;
 
-    while ((read = getline(&buffer, &len, stdin)) != -1) {
-        if (send(*(int*)client_socket, buffer, read, 0) < 0) {
-            free(buffer);
-            client_close(* (int*)client_socket);
-            return NULL;
+    while (1) {
+        if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
+            break; // Server disconnected
+        }
+
+        switch (header.msg_type) {
+            case MSG_SYNC_RESP: {
+                // Finalize clock sync
+                uint64_t t3 = get_monotonic_time();
+                uint64_t t1;
+                recv(sock, &t1, sizeof(t1), MSG_WAITALL);
+                clock_offset = ((header.timestamp_ns - t1) + (t3 - header.timestamp_ns)) / 2;
+                break;
+            }
+            
+            case MSG_STATS: {
+                experiment_stats_t stats;
+                recv(sock, &stats, sizeof(stats), MSG_WAITALL);
+                // Process statistics
+                break;
+            }
+            
+            case MSG_ACK: {
+                // Acknowledgment received
+                break;
+            }
+            
+            default:
+                printf("Unknown message type: %d\n", header.msg_type);
         }
     }
-    free(buffer);
+    
+    printf("Server disconnected\n");
     return NULL;
 }
-//this is a thread function client receive (client socket)
-void* client_channel_recv(void* client_socket) {
-    char buffer[1024];
+
+void* client_channel_send(void* client_socket) {
+    int sock = *(int*)client_socket;
     
-    while (1) {
-        int bytes_received = recv(*(int*)client_socket, buffer, sizeof(buffer), 0);
-        if (bytes_received < 0) {
-            perror("Error: Receive failed");
-            break;
-        } else if (bytes_received == 0) {
-            printf("Connection closed by server\n");
-            exit(0);
-            break;
-        }
-        buffer[bytes_received] = '\0';
-        safe_print(buffer);
-    }
+    // 1. Perform clock synchronization
+    uint64_t t1 = get_monotonic_time();
+    send_tcp_message(sock, MSG_SYNC, &t1, sizeof(t1));
+    
+    // 2. Send experiment start command
+    send_tcp_message(sock, MSG_START_EXP, NULL, 0);
+    
+    // 3. When experiment completes, send stop command
+    // (This would be triggered from your UDP thread)
+    //wait duration seconds and then send stop
+    sleep(duration); // Wait for the experiment duration
+    send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
     return NULL;
 }

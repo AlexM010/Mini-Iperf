@@ -22,6 +22,7 @@ int line=0;
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_t server_recv_thread, server_send_thread,client_send_thread,client_recv_thread;
 pthread_t udp_sender_thread, udp_receiver_thread;
+volatile sig_atomic_t stop_flag = 1;
 /**
  * Signal handler for SIGINT (Ctrl+C)
  * @param sig Signal number
@@ -36,22 +37,15 @@ void sigint_handler(int sig) {
         fflush(stdin);
         
         if(who == SERVER){
-            pthread_kill(udp_receiver_thread,SIGKILL);
-            pthread_kill(server_recv_thread,SIGKILL);
-            pthread_kill(server_send_thread,SIGKILL);
-            close(server_socket);
-            close(client_socket);
+            stop_flag=0;
         }
         else if(who == CLIENT)
-            pthread_kill(udp_sender_thread,SIGKILL);
-            pthread_kill(client_recv_thread,SIGKILL);
-            pthread_kill(client_send_thread,SIGKILL);
-            close(client_socket);
+            stop_flag=0;
+            //send  MSG_STOP using send_tcp_message
 
-        exit(0);
     }
 }
-
+int duration;
  /**
   * Main program entry point
   */
@@ -63,6 +57,12 @@ void sigint_handler(int sig) {
         free_arguments(&args);
         return 1;
      }
+    if (args.is_server && args.is_client) {
+        fprintf(stderr, "Error: Cannot run as both server and client\n");
+        free_arguments(&args);
+        return 1;
+    }
+     duration = args.duration;
 
 
     if (args.is_server) {

@@ -27,6 +27,11 @@
 #include <getopt.h>
 #include <signal.h>
 #include <pthread.h>
+#include <time.h>
+#include <errno.h>
+#include <poll.h>
+#include <math.h>
+
 
 /* Initial Functions and Structures */
 
@@ -52,12 +57,34 @@
  * Structure to represent the custom header for Mini-Iperf
  */
 typedef struct {
-  uint8_t     msg_type;       // Message type (e.g., START_EXP = 0x01, STOP_EXP = 0x02)
-  uint32_t    payload_len;    // Length of the payload (in bytes)
-  uint16_t    crc;            // Checksum for integrity verification
-  uint32_t    seq_num;        // Sequence number (optional, for multi-part messages)
-  // Reserved fields (if needed)
+  uint8_t     msg_type;       // Message type (from enum below)
+  uint32_t    payload_len;    // Length of the payload
+  uint16_t    crc;            // Checksum (optional)
+  uint64_t    timestamp_ns;   // For clock synchronization
+  int64_t     clock_offset;   // For OWD calculations
 } __attribute__((packed)) tcp_header_t;
+
+// Enhanced message types
+enum MessageType {
+  MSG_SYNC = 1,        // Clock synchronization request
+  MSG_SYNC_RESP = 2,   // Clock synchronization response
+  MSG_START_EXP = 3,   // Start experiment command
+  MSG_STOP_EXP = 4,    // Stop experiment command
+  MSG_STATS = 5,       // Statistics report
+  MSG_ACK = 6,         // Acknowledgment
+  MSG_CONTROL = 7      // General control message
+};
+
+// Structure for experiment statistics
+typedef struct {
+  uint64_t total_packets;
+  uint64_t lost_packets;
+  double avg_owd_ms;
+  double min_owd_ms;
+  double max_owd_ms;
+  double jitter_ms;
+  double throughput_mbps;
+} __attribute__((packed)) experiment_stats_t;
 /**
  * Structure to represent the custom header for Mini-Iperf
  */
@@ -77,15 +104,6 @@ typedef struct {
 
 //total bytes = 16 B
 
-/**
- * Enum for message types
- */
-enum MessageType {
-  MSG_START = 1,
-  MSG_STOP = 2,
-  MSG_STATS = 3,
-  MSG_ACK = 4
-};
 
  /**
   * Initialize arguments structure with default values
@@ -129,6 +147,7 @@ void safe_print(char* message);
 
 
 // TCP Channel Functions
+int send_tcp_message(int sock, uint8_t msg_type, const void* payload, uint32_t payload_len);
 //Server Functions
 int server_start(const char* ip, int port);
 int server_accept(int server_socket);

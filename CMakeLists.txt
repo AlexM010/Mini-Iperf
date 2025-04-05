@@ -11,3 +11,5 @@ file(GLOB SOURCES "src/*.c")
 add_executable(mini_iperf ${SOURCES})
 
 target_link_libraries(mini_iperf pthread)
+target_link_libraries(mini_iperf m)
+target_link_libraries(mini_iperf rt)
