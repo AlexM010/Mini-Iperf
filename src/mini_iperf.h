@@ -64,17 +64,15 @@ typedef struct {
   int64_t     clock_offset;   // For OWD calculations
 } __attribute__((packed)) tcp_header_t;
 
-// Enhanced message types
 enum MessageType {
   MSG_SYNC = 1,        // Clock synchronization request
   MSG_SYNC_RESP = 2,   // Clock synchronization response
   MSG_START_EXP = 3,   // Start experiment command
   MSG_STOP_EXP = 4,    // Stop experiment command
-  MSG_STATS = 5,       // Statistics report
-  MSG_ACK = 6,         // Acknowledgment
-  MSG_CONTROL = 7      // General control message
+  MSG_STATS = 5,       // Final statistics report
+  MSG_INTERIM = 6,     // Interim statistics report
+  MSG_ACK = 7          // Acknowledgment
 };
-
 // Structure for experiment statistics
 typedef struct {
   uint64_t total_packets;
@@ -85,6 +83,8 @@ typedef struct {
   double jitter_ms;
   double throughput_mbps;
 } __attribute__((packed)) experiment_stats_t;
+
+
 /**
  * Structure to represent the custom header for Mini-Iperf
  */
@@ -167,6 +167,8 @@ void* client_channel_recv(void* client_socket);
 // UDP Channel Functions
 void *udp_sendto(void* args);
 void* udp_recv(void* args);
+
+uint64_t get_monotonic_time();
 
 
 

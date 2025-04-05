@@ -16,6 +16,8 @@
 
 int server_socket=-1;
 extern volatile sig_atomic_t stop_flag;
+extern pthread_t udp_receiver_thread;
+extern struct arguments args;
 
 int server_start(const char* ip, int port) {
     // Create a socket for the server
@@ -123,7 +125,7 @@ void* server_channel_recv(void* client_socket) {
             
             case MSG_START_EXP: {
                 printf("Experiment started by client\n");
-                stop_flag=1;
+                pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
                 break;
             }
             

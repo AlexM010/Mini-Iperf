@@ -46,11 +46,9 @@ void sigint_handler(int sig) {
     }
 }
 int duration;
- /**
-  * Main program entry point
-  */
+struct arguments args;
+ 
  int main(int argc, char* argv[]) {
-    struct arguments args;
     signal(SIGINT, sigint_handler);
 
      if (parse_arguments(argc, argv, &args) != 0) {
@@ -79,10 +77,10 @@ int duration;
             return 1;
         }
         pthread_create(&server_recv_thread, NULL, server_channel_recv, (void*)&client_socket);
-        pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&client_socket);
-        pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
+       // pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&client_socket);
+        
         pthread_join(server_recv_thread, NULL);
-        pthread_join(server_send_thread, NULL);
+     //   pthread_join(server_send_thread, NULL);
     } else if (args.is_client) {
         client_socket = client_connect(args.ip_address, args.port);
         if (client_socket < 0) {
@@ -90,14 +88,14 @@ int duration;
             return 1;
         }
         who = CLIENT;
-        pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&client_socket);
+  //      pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&client_socket);
         pthread_create(&client_send_thread, NULL, client_channel_send, (void*)&client_socket);
-        pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
-        pthread_join(client_recv_thread, NULL);
+        
+       // pthread_join(client_recv_thread, NULL);
         pthread_join(client_send_thread, NULL);
     }
 
-     print_arguments(&args);
+    // print_arguments(&args);
      free_arguments(&args);
      return 0;
  }

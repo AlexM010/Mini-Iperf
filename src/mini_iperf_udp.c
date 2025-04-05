@@ -13,12 +13,20 @@ static int all_bytes_equal(const void *ptr, int c, size_t n) {
 }
 
 // Get current monotonic time in nanoseconds
-static uint64_t get_monotonic_time() {
+uint64_t get_monotonic_time() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * NS_PER_SEC + ts.tv_nsec;
 }
+// Global statistics accessible from server_channel_send
+typedef struct {
+    uint64_t received_packets;
+    uint64_t lost_packets;
+    uint64_t total_bytes;
+    // Add other needed stats
+} udp_stats_t;
 
+udp_stats_t udp_stats = {0};
 // UDP Sender Thread
 void* udp_sendto(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;

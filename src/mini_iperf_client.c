@@ -13,6 +13,9 @@
 #include "mini_iperf.h"
 int client_socket=-1;
 extern int duration;
+extern pthread_t udp_sender_thread;
+extern volatile sig_atomic_t stop_flag;
+extern struct arguments args;
 
 /**
  * @brief Connect to the server
@@ -110,6 +113,12 @@ void* client_channel_recv(void* client_socket) {
                 // Acknowledgment received
                 break;
             }
+            case MSG_STOP_EXP: {
+                // Stop experiment command received
+                printf("Experiment stopped by server\n");
+                stop_flag=0;
+                break;
+            }
             
             default:
                 printf("Unknown message type: %d\n", header.msg_type);
@@ -125,15 +134,18 @@ void* client_channel_send(void* client_socket) {
     
     // 1. Perform clock synchronization
     uint64_t t1 = get_monotonic_time();
-    send_tcp_message(sock, MSG_SYNC, &t1, sizeof(t1));
+   // send_tcp_message(sock, MSG_SYNC, &t1, sizeof(t1));
     
     // 2. Send experiment start command
     send_tcp_message(sock, MSG_START_EXP, NULL, 0);
+    pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
     
     // 3. When experiment completes, send stop command
     // (This would be triggered from your UDP thread)
     //wait duration seconds and then send stop
     sleep(duration); // Wait for the experiment duration
     send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
+
+
     return NULL;
 }
