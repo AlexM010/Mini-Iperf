@@ -18,6 +18,7 @@ int server_socket=-1;
 extern volatile sig_atomic_t stop_flag;
 extern pthread_t udp_receiver_thread;
 extern struct arguments args;
+uint64_t clock_offset;  // For OWD calculations
 
 int server_start(const char* ip, int port) {
     // Create a socket for the server
@@ -107,9 +108,9 @@ int server_close(int server_socket) {
 void* server_channel_recv(void* client_socket) {
     int sock = *(int*)client_socket;
     tcp_header_t header;
-    int64_t clock_offset = 0;
+    clock_offset = 0;
 
-    while (1) {
+    while (stop_flag) {
         // Receive header
         if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
             break; // Client disconnected
@@ -117,12 +118,25 @@ void* server_channel_recv(void* client_socket) {
 
         switch (header.msg_type) {
             case MSG_SYNC: {
-                // Clock synchronization
-                uint64_t t2 = get_monotonic_time();
-                send_tcp_message(sock, MSG_SYNC_RESP, &header.timestamp_ns, sizeof(uint64_t));
+                // Clock synchronization request from client
+                uint64_t t1, t2;
+                
+                // Receive client's t1
+                if (recv(sock, &t1, sizeof(t1), MSG_WAITALL) <= 0) {
+                    perror("Failed to receive t1");
+                    break;
+                }
+                
+                // Get server's receive time (t2)
+                t2 = get_monotonic_time();
+                
+                // Send back both t1 and t2
+                uint64_t sync_data[2] = {t1, t2};
+                if (send_tcp_message(sock, MSG_SYNC_RESP, sync_data, sizeof(sync_data)) < 0) {
+                    perror("Failed to send sync response");
+                }
                 break;
             }
-            
             case MSG_START_EXP: {
                 printf("Experiment started by client\n");
                 pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
@@ -131,7 +145,9 @@ void* server_channel_recv(void* client_socket) {
             
             case MSG_STOP_EXP: {
                 printf("Experiment stopped by client\n");
-                stop_flag=0;
+                stop_flag = 0;
+                // Wait for UDP receiver thread to finish
+                pthread_join(udp_receiver_thread, NULL);
                 break;
             }
             
@@ -152,10 +168,10 @@ void* server_channel_send(void* client_socket) {
     
     int sock = *(int*)client_socket;
     
-    while (1) {
-        sleep(1); // Example: Send periodic updates every second
-        // You can add periodic reporting here if needed
+    while (stop_flag) {
+        sleep(1); 
+        // Example: Send periodic statistics
     }
-    
+
     return NULL;
 }

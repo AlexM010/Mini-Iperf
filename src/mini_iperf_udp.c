@@ -5,6 +5,7 @@
 #define BATCH_SIZE 32
 #define NS_PER_SEC 1000000000L
 extern volatile sig_atomic_t stop_flag;
+extern int64_t clock_offset;  // For OWD calculations
 // Utility function to check if all bytes in buffer match expected value
 static int all_bytes_equal(const void *ptr, int c, size_t n) {
     const unsigned char *p = ptr;
@@ -18,15 +19,6 @@ uint64_t get_monotonic_time() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * NS_PER_SEC + ts.tv_nsec;
 }
-// Global statistics accessible from server_channel_send
-typedef struct {
-    uint64_t received_packets;
-    uint64_t lost_packets;
-    uint64_t total_bytes;
-    // Add other needed stats
-} udp_stats_t;
-
-udp_stats_t udp_stats = {0};
 // UDP Sender Thread
 void* udp_sendto(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;
@@ -139,6 +131,7 @@ void* udp_sendto(void* args_ptr) {
     return NULL;
 }
 
+
 // UDP Receiver Thread
 void* udp_recv(void* args_ptr) {
     struct arguments* args = (struct arguments*)args_ptr;
@@ -190,8 +183,12 @@ void* udp_recv(void* args_ptr) {
         int jitter_samples_capacity;    // Size of jitter_samples array
         double jitter_sum;              // Sum of all jitter values
         double jitter_sum_squares;      // Sum of squares for stddev calculation
+        int64_t clock_offset;    // Added for OWD
+        uint64_t total_owd_ns;
+        uint64_t min_owd_ns;
+        uint64_t max_owd_ns;
     } stats = {0};
-
+    stats.clock_offset=clock_offset;
     // Initialize jitter samples array
     stats.jitter_samples_capacity = 100000; // Adjust based on expected packet count
     stats.jitter_samples = malloc(stats.jitter_samples_capacity * sizeof(double));
@@ -208,7 +205,6 @@ void* udp_recv(void* args_ptr) {
     while (stop_flag) {
         struct pollfd pfd = {.fd = sock, .events = POLLIN};
         int ready = poll(&pfd, 1, 10);  // 10ms timeout
-        
         if (ready < 0) {
             perror("poll failed");
             break;
@@ -216,7 +212,6 @@ void* udp_recv(void* args_ptr) {
             // Timeout - check if we should exit
             if (args->duration > 0 && stats.received_packets > 0) {
                 const double elapsed = (get_monotonic_time() - stats.first_ts) / (double)NS_PER_SEC;
-                
             }
             continue;
         }
@@ -283,7 +278,20 @@ void* udp_recv(void* args_ptr) {
                 stats.out_of_order++;
             }
         }
+      // When receiving packets:
+    uint64_t sender_time = packet.header.timestamp_ns;
+    uint64_t receiver_time = get_monotonic_time();
 
+    // Calculate one-way delay (adjusting for clock offset)
+    int64_t owd_ns = (int64_t)(receiver_time - sender_time) - clock_offset;
+        double owd_ms = owd_ns / 1e6;
+
+        // Update your statistics tracking
+        stats.total_owd_ns += owd_ns;
+        if (owd_ns < stats.min_owd_ns ||stats.min_owd_ns==0){
+            stats.min_owd_ns = owd_ns;
+        }    
+        if (owd_ns > stats.max_owd_ns) stats.max_owd_ns = owd_ns;
         // Update statistics
         stats.last_ts = recv_time;
         stats.total_bytes += bytes;
@@ -324,6 +332,11 @@ void* udp_recv(void* args_ptr) {
         printf("Avg Jitter:      %.3f ms\n", mean_jitter);
         printf("Jitter Std Dev:  %.3f ms\n", stddev);
     }
+    // In your statistics printing code:
+    printf("One-Way Delay:\n");
+    printf("  Average: %.3f ms\n", stats.total_owd_ns / (1e6 * stats.received_packets));
+    printf("  Minimum: %.3f ms\n", stats.min_owd_ns / 1e6);
+    printf("  Maximum: %.3f ms\n", stats.max_owd_ns / 1e6);
     
     printf("========================\n");
 

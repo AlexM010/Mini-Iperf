@@ -17,6 +17,7 @@ extern pthread_t udp_sender_thread;
 extern volatile sig_atomic_t stop_flag;
 extern struct arguments args;
 
+extern int64_t clock_offset;
 /**
  * @brief Connect to the server
  * @param server_ip IP address of the server
@@ -87,7 +88,7 @@ void* client_channel_recv(void* client_socket) {
     tcp_header_t header;
     int64_t clock_offset = 0;
 
-    while (1) {
+    while (stop_flag) {
         if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
             break; // Server disconnected
         }
@@ -128,24 +129,52 @@ void* client_channel_recv(void* client_socket) {
     printf("Server disconnected\n");
     return NULL;
 }
-
 void* client_channel_send(void* client_socket) {
     int sock = *(int*)client_socket;
-    
     // 1. Perform clock synchronization
     uint64_t t1 = get_monotonic_time();
-   // send_tcp_message(sock, MSG_SYNC, &t1, sizeof(t1));
-    
+    if (send_tcp_message(sock, MSG_SYNC, &t1, sizeof(t1)) < 0) {
+        perror("Failed to send sync request");
+        return NULL;
+    }
+
+    // Wait for server's response
+    tcp_header_t header;
+    if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
+        perror("Failed to receive sync header");
+        return NULL;
+    }
+
+    if (header.msg_type == MSG_SYNC_RESP) {
+        uint64_t sync_data[2];
+        if (recv(sock, &sync_data, sizeof(sync_data), MSG_WAITALL) <= 0) {
+            perror("Failed to receive sync data");
+            return NULL;
+        }
+        
+        uint64_t t1 = sync_data[0];  // Original client time
+        uint64_t t2 = sync_data[1];  // Server receive time
+        uint64_t t3 = get_monotonic_time(); // Client receive time
+        
+        // Calculate clock offset (NTP-style)
+        clock_offset = ((int64_t)(t2 - t1) - (int64_t)(t3 - t2)) / 2;
+        printf("Clock synchronized. Offset: %ld ns\n", clock_offset);
+    } else {
+        fprintf(stderr, "Unexpected message type during sync: %d\n", header.msg_type);
+        return NULL;
+    }
     // 2. Send experiment start command
-    send_tcp_message(sock, MSG_START_EXP, NULL, 0);
+    send_tcp_message(sock, MSG_START_EXP,NULL, 0);
+    if(args.wait_duration > 0) {
+        sleep(args.wait_duration); // Wait for the specified duration
+    }
     pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
-    
-    // 3. When experiment completes, send stop command
-    // (This would be triggered from your UDP thread)
-    //wait duration seconds and then send stop
-    sleep(duration); // Wait for the experiment duration
-    send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
-
-
+    if (duration>0)
+    {
+        sleep(duration); // Wait for the experiment duration
+        send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
+        stop_flag = 0; // Set stop flag to terminate threads
+    }
+    pthread_join(udp_sender_thread, NULL);
     return NULL;
 }

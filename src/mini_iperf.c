@@ -28,23 +28,37 @@ volatile sig_atomic_t stop_flag = 1;
  * @param sig Signal number
  */
 
-void sigint_handler(int sig) {
+ void sigint_handler(int sig) {
     char c;
-    printf("\nDo you want to exit? (y/n): ");
+    signal(sig, SIG_IGN); // Ignore further SIGINT while handling
+    
+    printf("\nDo you really want to terminate the experiment? (y/n): ");
+    fflush(stdout);
+    
+    // Clear input buffer
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != EOF);
+    
     c = getchar();
     if (c == 'y' || c == 'Y') {
-        printf("Exiting...\n");
-        fflush(stdin);
-        
-        if(who == SERVER){
-            stop_flag=0;
+        printf("Terminating experiment...\n");
+        stop_flag = 0;
+        if (who == SERVER && server_socket > 0) {
+            // Server-specific cleanup
+            send_tcp_message(server_socket, MSG_STOP_EXP, NULL, 0);
+            server_close(server_socket);
+        } 
+        else if (who == CLIENT && client_socket > 0) {
+            // Client-specific cleanup
+            send_tcp_message(client_socket, MSG_STOP_EXP, NULL, 0);
+            client_close(client_socket);
         }
-        else if(who == CLIENT)
-            stop_flag=0;
-            //send  MSG_STOP using send_tcp_message
-
+    } else {
+        printf("Continuing experiment...\n");
+        signal(SIGINT, sigint_handler); // Re-enable signal handler
     }
 }
+
 int duration;
 struct arguments args;
  
@@ -77,10 +91,8 @@ struct arguments args;
             return 1;
         }
         pthread_create(&server_recv_thread, NULL, server_channel_recv, (void*)&client_socket);
-       // pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&client_socket);
         
         pthread_join(server_recv_thread, NULL);
-     //   pthread_join(server_send_thread, NULL);
     } else if (args.is_client) {
         client_socket = client_connect(args.ip_address, args.port);
         if (client_socket < 0) {
@@ -88,10 +100,8 @@ struct arguments args;
             return 1;
         }
         who = CLIENT;
-  //      pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&client_socket);
         pthread_create(&client_send_thread, NULL, client_channel_send, (void*)&client_socket);
         
-       // pthread_join(client_recv_thread, NULL);
         pthread_join(client_send_thread, NULL);
     }
 

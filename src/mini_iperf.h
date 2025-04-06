@@ -61,7 +61,6 @@ typedef struct {
   uint32_t    payload_len;    // Length of the payload
   uint16_t    crc;            // Checksum (optional)
   uint64_t    timestamp_ns;   // For clock synchronization
-  int64_t     clock_offset;   // For OWD calculations
 } __attribute__((packed)) tcp_header_t;
 
 enum MessageType {
@@ -82,6 +81,10 @@ typedef struct {
   double max_owd_ms;
   double jitter_ms;
   double throughput_mbps;
+  double goodput_mbps;
+  uint64_t bytes_received;
+  uint64_t packets_received;
+  double current_mbps;   
 } __attribute__((packed)) experiment_stats_t;
 
 
