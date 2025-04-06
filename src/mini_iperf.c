@@ -29,33 +29,26 @@ volatile sig_atomic_t stop_flag = 1;
  */
 
  void sigint_handler(int sig) {
-    char c;
-    signal(sig, SIG_IGN); // Ignore further SIGINT while handling
-    
     printf("\nDo you really want to terminate the experiment? (y/n): ");
     fflush(stdout);
-    
-    // Clear input buffer
+
+    // Flush input buffer before reading
     int ch;
     while ((ch = getchar()) != '\n' && ch != EOF);
-    
-    c = getchar();
+    char c = getchar();
     if (c == 'y' || c == 'Y') {
-        printf("Terminating experiment...\n");
+        if(!stop_flag)  exit(0);
         stop_flag = 0;
-        if (who == SERVER && server_socket > 0) {
-            // Server-specific cleanup
-            send_tcp_message(server_socket, MSG_STOP_EXP, NULL, 0);
+        if (who == SERVER && client_socket > 0) {
+            send_tcp_message(client_socket, MSG_STOP_EXP, NULL, 0);
             server_close(server_socket);
-        } 
-        else if (who == CLIENT && client_socket > 0) {
-            // Client-specific cleanup
+
+        } else if (who == CLIENT && client_socket > 0) {
             send_tcp_message(client_socket, MSG_STOP_EXP, NULL, 0);
             client_close(client_socket);
         }
     } else {
-        printf("Continuing experiment...\n");
-        signal(SIGINT, sigint_handler); // Re-enable signal handler
+        signal(SIGINT, sigint_handler);  // Reinstall the handler
     }
 }
 

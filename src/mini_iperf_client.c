@@ -14,6 +14,7 @@
 int client_socket=-1;
 extern int duration;
 extern pthread_t udp_sender_thread;
+extern pthread_t client_recv_thread;
 extern volatile sig_atomic_t stop_flag;
 extern struct arguments args;
 
@@ -73,6 +74,7 @@ int client_receive(int client_socket, char* buffer, int buffer_size) {
 }
 //terminate tcp connection
 int client_close(int client_socket) {
+    shutdown(client_socket, SHUT_RDWR);
     // Close the client socket
     if (close(client_socket) < 0) {
         perror("Error: Socket close failed");
@@ -87,8 +89,8 @@ void* client_channel_recv(void* client_socket) {
     int sock = *(int*)client_socket;
     tcp_header_t header;
     int64_t clock_offset = 0;
-
-    while (stop_flag) {
+    printf("HEYYYYYY\n");
+    while (1) {
         if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
             break; // Server disconnected
         }
@@ -165,6 +167,7 @@ void* client_channel_send(void* client_socket) {
     }
     // 2. Send experiment start command
     send_tcp_message(sock, MSG_START_EXP,NULL, 0);
+    pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&sock);
     if(args.wait_duration > 0) {
         sleep(args.wait_duration); // Wait for the specified duration
     }
@@ -175,6 +178,9 @@ void* client_channel_send(void* client_socket) {
         send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
         stop_flag = 0; // Set stop flag to terminate threads
     }
+    //thread to create  client channel recv trread
+
+    pthread_join(client_recv_thread, NULL);
     pthread_join(udp_sender_thread, NULL);
     return NULL;
 }

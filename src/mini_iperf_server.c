@@ -95,6 +95,8 @@ int server_send(int client_socket, const char* message, int message_size) {
 }
 
 int server_close(int server_socket) {
+    //shutdown first
+    shutdown(server_socket, SHUT_RDWR);
     // Close the server socket
     if (close(server_socket) < 0) {
         perror("Error: Socket close failed");
