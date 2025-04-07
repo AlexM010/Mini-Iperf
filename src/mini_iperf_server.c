@@ -13,12 +13,13 @@
  */
 
 #include "mini_iperf.h"
-
+#define NS_PER_SEC 1000000000L
 int server_socket=-1;
 extern volatile sig_atomic_t stop_flag;
 extern pthread_t udp_receiver_thread;
 extern struct arguments args;
 uint64_t clock_offset;  // For OWD calculations
+extern uint64_t current_mbps;
 
 int server_start(const char* ip, int port) {
     // Create a socket for the server
@@ -111,7 +112,7 @@ void* server_channel_recv(void* client_socket) {
     int sock = *(int*)client_socket;
     tcp_header_t header;
     clock_offset = 0;
-
+    pthread_t server_send_thread;
     while (stop_flag) {
         // Receive header
         if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
@@ -142,38 +143,53 @@ void* server_channel_recv(void* client_socket) {
             case MSG_START_EXP: {
                 fprintf(args.out,"Experiment started by client\n");
                 pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
+                pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&sock);
+                stop_flag = 1; // Set the flag to indicate the experiment is running
+
                 break;
             }
-            
+
             case MSG_STOP_EXP: {
                 fprintf(args.out,"Experiment stopped by client\n");
                 stop_flag = 0;
                 // Wait for UDP receiver thread to finish
                 pthread_join(udp_receiver_thread, NULL);
+                pthread_kill(server_send_thread, 0); // Terminate the send thread
                 break;
             }
-            
             default:
                 fprintf(stderr,"Unknown message type: %d\n", header.msg_type);
         }
     }
-    
+
     fprintf(args.out,"Client disconnected\n");
     return NULL;
 }
 
 void* server_channel_send(void* client_socket) {
-    // This thread can now be used for:
-    // 1. Periodic statistics reporting
-    // 2. Unsolicited server notifications
-    // 3. Keepalive messages
-    
     int sock = *(int*)client_socket;
+    experiment_stats_t stats = {0};
+    uint64_t last_report_time = 0;
     
     while (stop_flag) {
-        sleep(1); 
-        // Example: Send periodic statistics
-    }
+        uint64_t current_time = get_monotonic_time();
+        
+        // Check if it's time to send a report (every args.interval seconds)
+        if ((current_time - last_report_time) / NS_PER_SEC >= args.interval) {
 
+            stats.current_mbps =current_mbps; // Calculate current throughput
+
+            if (send_tcp_message(sock, MSG_INTERIM, &stats, sizeof(stats))) {
+                perror("Failed to send interim statistics");
+                break;
+            }
+            
+            last_report_time = current_time;
+        }
+        
+        // Sleep for a short time to avoid busy waiting
+        sleep(args.interval); // 100ms
+    }
+    
     return NULL;
 }

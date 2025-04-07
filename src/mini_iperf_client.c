@@ -112,13 +112,23 @@ void* client_channel_recv(void* client_socket) {
             }
             
             case MSG_ACK: {
-                // Acknowledgment received
                 break;
             }
             case MSG_STOP_EXP: {
                 // Stop experiment command received
                 fprintf(args.out,"Experiment stopped by server\n");
                 stop_flag=0;
+                break;
+            }
+            case MSG_INTERIM: {
+                experiment_stats_t stats;
+                if (recv(sock, &stats, sizeof(stats), MSG_WAITALL) <= 0) {
+                    perror("Failed to receive interim stats");
+                    break;
+                }
+                fprintf(args.out, "\nCurrent Throughput: %.2f Mbps\n", stats.current_mbps);
+
+                fflush(args.out);
                 break;
             }
             

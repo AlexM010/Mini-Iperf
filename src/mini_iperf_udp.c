@@ -6,6 +6,7 @@
 #define NS_PER_SEC 1000000000L
 extern volatile sig_atomic_t stop_flag;
 extern int64_t clock_offset;  // For OWD calculations
+uint64_t current_mbps=0;
 // Utility function to check if all bytes in buffer match expected value
 static int all_bytes_equal(const void *ptr, int c, size_t n) {
     const unsigned char *p = ptr;
@@ -297,6 +298,25 @@ void* udp_recv(void* args_ptr) {
         // Check experiment duration
         if (args->duration > 0) {
             const double elapsed = (recv_time - stats.first_ts) / (double)NS_PER_SEC;
+        }
+        // Calculate current Mbps for the last second
+        static uint64_t last_second_bytes = 0;
+        static uint64_t last_second_time = 0;
+
+        uint64_t current_time = recv_time / NS_PER_SEC;
+        if (current_time > last_second_time) {
+            current_mbps = ((stats.total_bytes - last_second_bytes) * 8) / 1e6;
+            last_second_bytes = stats.total_bytes;
+            last_second_time = current_time;
+        }
+        // Print progress based on the given interval
+        static uint64_t last_print_time = 0;
+        if (current_time >= last_print_time + args->interval) {
+            fprintf(args->out, "Time: %lus, Received Packets: %u, Throughput: %.2ld Mbps\n",
+            current_time - (stats.first_ts / NS_PER_SEC),
+            stats.received_packets,
+            current_mbps);
+            last_print_time = current_time;
         }
     }
 
