@@ -51,6 +51,7 @@
     int duration;           // -t: Experiment duration in seconds
     int measure_delay;      // -d: Flag for delay measurement mode
     int wait_duration;      // -w: Wait duration before transmission
+    FILE* out;
 };
 #define HEADER_SIZE 24  // Define fixed header size (adjust as needed)
 /**

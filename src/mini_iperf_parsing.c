@@ -17,6 +17,7 @@ void init_arguments(struct arguments* args) {
     args->port = 5201;             // 5201 default port
     args->bandwidth = 0;        // Default no bandwidth limit
     args->wait_duration = 0;    // Default no wait duration
+    args->out=stdout;
     // All other fields are initialized to 0/NULL by memset
 }
 

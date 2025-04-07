@@ -49,8 +49,8 @@ int server_start(const char* ip, int port) {
         return -1;
     }
 
-    printf("Server started successfully.\n");
-    printf("Listening on IP: %s, Port: %d\n", ip == NULL ? "0.0.0.0" : ip, port);
+    fprintf(args.out,"Server started successfully.\n");
+    fprintf(args.out,"Listening on IP: %s, Port: %d\n", ip == NULL ? "0.0.0.0" : ip, port);
 
 
     return server_socket;
@@ -89,7 +89,7 @@ int server_send(int client_socket, const char* message, int message_size) {
         perror("Error: Send failed");
         return -1;
     }
-    printf("Sent %d bytes to the client.\n", bytes_sent);
+    fprintf(args.out,"Sent %d bytes to the client.\n", bytes_sent);
 
     return bytes_sent;
 }
@@ -102,7 +102,7 @@ int server_close(int server_socket) {
         perror("Error: Socket close failed");
         return -1;
     }
-    printf("Server socket closed successfully.\n");
+    fprintf(args.out,"Server socket closed successfully.\n");
     return 0;
 }
 
@@ -140,13 +140,13 @@ void* server_channel_recv(void* client_socket) {
                 break;
             }
             case MSG_START_EXP: {
-                printf("Experiment started by client\n");
+                fprintf(args.out,"Experiment started by client\n");
                 pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
                 break;
             }
             
             case MSG_STOP_EXP: {
-                printf("Experiment stopped by client\n");
+                fprintf(args.out,"Experiment stopped by client\n");
                 stop_flag = 0;
                 // Wait for UDP receiver thread to finish
                 pthread_join(udp_receiver_thread, NULL);
@@ -154,11 +154,11 @@ void* server_channel_recv(void* client_socket) {
             }
             
             default:
-                printf("Unknown message type: %d\n", header.msg_type);
+                fprintf(stderr,"Unknown message type: %d\n", header.msg_type);
         }
     }
     
-    printf("Client disconnected\n");
+    fprintf(args.out,"Client disconnected\n");
     return NULL;
 }
 

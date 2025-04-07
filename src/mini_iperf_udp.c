@@ -308,17 +308,17 @@ void* udp_recv(void* args_ptr) {
     double duration_sec = (stats.last_ts - stats.first_ts) / (double)NS_PER_SEC;
     if (duration_sec <= 0) duration_sec = 1e-9;
 
-    printf("\n=== UDP Statistics ===\n");
-    printf("Duration:        %.3f sec\n", duration_sec);
-    printf("Total Bytes:     %.2f MB\n", stats.total_bytes / 1e6);
-    printf("Payload Bytes:   %.2f MB\n", stats.payload_bytes / 1e6);
-    printf("Valid Packets:   %u\n", stats.received_packets);
-    printf("Corrupt Packets: %u\n", stats.corrupt_packets);
-    printf("Out-of-Order:    %u\n", stats.out_of_order);
-    printf("Lost Packets:    %u (%.2f%%)\n", stats.lost_packets,
+    fprintf(args->out,"\n=== UDP Statistics ===\n");
+    fprintf(args->out,"Duration:        %.3f sec\n", duration_sec);
+    fprintf(args->out,"Total Bytes:     %.2f MB\n", stats.total_bytes / 1e6);
+    fprintf(args->out,"Payload Bytes:   %.2f MB\n", stats.payload_bytes / 1e6);
+    fprintf(args->out,"Valid Packets:   %u\n", stats.received_packets);
+    fprintf(args->out,"Corrupt Packets: %u\n", stats.corrupt_packets);
+    fprintf(args->out,"Out-of-Order:    %u\n", stats.out_of_order);
+    fprintf(args->out,"Lost Packets:    %u (%.2f%%)\n", stats.lost_packets,
            stats.expected_seq > 0 ? 100.0 * stats.lost_packets / stats.expected_seq : 0.0);
-    printf("Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
-    printf("Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
+    fprintf(args->out,"Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
+    fprintf(args->out,"Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
     
     // Calculate jitter statistics
     if (stats.jitter_samples_count > 1) {
@@ -329,16 +329,16 @@ void* udp_recv(void* args_ptr) {
                          (mean_jitter * mean_jitter);
         double stddev = sqrt(variance > 0 ? variance : 0);
         
-        printf("Avg Jitter:      %.3f ms\n", mean_jitter);
-        printf("Jitter Std Dev:  %.3f ms\n", stddev);
+        fprintf(args->out,"Avg Jitter:      %.3f ms\n", mean_jitter);
+        fprintf(args->out,"Jitter Std Dev:  %.3f ms\n", stddev);
     }
     // In your statistics printing code:
-    printf("One-Way Delay:\n");
-    printf("  Average: %.3f ms\n", stats.total_owd_ns / (1e6 * stats.received_packets));
-    printf("  Minimum: %.3f ms\n", stats.min_owd_ns / 1e6);
-    printf("  Maximum: %.3f ms\n", stats.max_owd_ns / 1e6);
+    fprintf(args->out,"One-Way Delay:\n");
+    fprintf(args->out,"  Average: %.3f ms\n", stats.total_owd_ns / (1e6 * stats.received_packets));
+    fprintf(args->out,"  Minimum: %.3f ms\n", stats.min_owd_ns / 1e6);
+    fprintf(args->out,"  Maximum: %.3f ms\n", stats.max_owd_ns / 1e6);
     
-    printf("========================\n");
+    fprintf(args->out,"========================\n");
 
     // Clean up
     free(stats.jitter_samples);

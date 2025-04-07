@@ -62,6 +62,15 @@ struct arguments args;
         free_arguments(&args);
         return 1;
      }
+    //fill args.out with fopen if -f
+    if (args.filename != NULL) {
+        args.out = fopen(args.filename, "w");
+        if (args.out == NULL) {
+            fprintf(stderr, "Error: Unable to open output file %s\n", args.filename);
+            free_arguments(&args);
+            return 1;
+        }
+    }
     if (args.is_server && args.is_client) {
         fprintf(stderr, "Error: Cannot run as both server and client\n");
         free_arguments(&args);

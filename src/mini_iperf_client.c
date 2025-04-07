@@ -45,7 +45,7 @@ int client_connect(const char* server_ip, int server_port){
         perror("Error: Connection failed");
         return -1;
     }
-    printf("Connected to server %s on port %d\n", server_ip, server_port);
+    fprintf(args.out,"Connected to server %s on port %d\n", server_ip, server_port);
 
     return client_socket;
 }
@@ -58,7 +58,7 @@ int client_send(int client_socket, const char* message, int message_size) {
         perror("Error: Send failed");
         return -1;
     }
-    printf("Sent %d bytes to the server\n", bytes_sent);
+    fprintf(args.out,"Sent %d bytes to the server\n", bytes_sent);
     return bytes_sent;
 }
 
@@ -80,7 +80,7 @@ int client_close(int client_socket) {
         perror("Error: Socket close failed");
         return -1;
     }
-    printf("Connection closed\n");
+    fprintf(args.out,"Connection closed\n");
 
     return 0;
 }
@@ -89,7 +89,6 @@ void* client_channel_recv(void* client_socket) {
     int sock = *(int*)client_socket;
     tcp_header_t header;
     int64_t clock_offset = 0;
-    printf("HEYYYYYY\n");
     while (1) {
         if (recv(sock, &header, sizeof(header), MSG_WAITALL) <= 0) {
             break; // Server disconnected
@@ -118,7 +117,7 @@ void* client_channel_recv(void* client_socket) {
             }
             case MSG_STOP_EXP: {
                 // Stop experiment command received
-                printf("Experiment stopped by server\n");
+                fprintf(args.out,"Experiment stopped by server\n");
                 stop_flag=0;
                 break;
             }
@@ -128,7 +127,7 @@ void* client_channel_recv(void* client_socket) {
         }
     }
     
-    printf("Server disconnected\n");
+    fprintf(args.out,"Server disconnected\n");
     return NULL;
 }
 void* client_channel_send(void* client_socket) {
@@ -160,7 +159,7 @@ void* client_channel_send(void* client_socket) {
         
         // Calculate clock offset (NTP-style)
         clock_offset = ((int64_t)(t2 - t1) - (int64_t)(t3 - t2)) / 2;
-        printf("Clock synchronized. Offset: %ld ns\n", clock_offset);
+        fprintf(args.out,"Clock synchronized. Offset: %ld ns\n", clock_offset);
     } else {
         fprintf(stderr, "Unexpected message type during sync: %d\n", header.msg_type);
         return NULL;
