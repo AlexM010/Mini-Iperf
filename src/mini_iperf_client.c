@@ -164,16 +164,18 @@ void* client_channel_send(void* client_socket) {
         fprintf(stderr, "Unexpected message type during sync: %d\n", header.msg_type);
         return NULL;
     }
-    // 2. Send experiment start command
-    send_tcp_message(sock, MSG_START_EXP,NULL, 0);
-    pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&sock);
     if(args.wait_duration > 0) {
         sleep(args.wait_duration); // Wait for the specified duration
     }
+    // 2. Send experiment start command
+    send_tcp_message(sock, MSG_START_EXP,NULL, 0);
+    pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&sock);
     pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
-    if (duration>0)
+    
+    if (args.duration>0)
     {
-        sleep(duration); // Wait for the experiment duration
+        fprintf(args.out,"Experiment will run for %d seconds\n", args.duration);
+        sleep(args.duration); // Wait for the experiment duration
         send_tcp_message(sock, MSG_STOP_EXP, NULL, 0); // Send stop command
         stop_flag = 0; // Set stop flag to terminate threads
     }

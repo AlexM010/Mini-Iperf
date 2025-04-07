@@ -69,7 +69,6 @@ void* udp_sendto(void* args_ptr) {
         memset(batch[i].payload, 'A', payload_size);
     }
 
-    if (args->wait_duration > 0) sleep(args->wait_duration);
 
     const uint64_t start_time = get_monotonic_time();
     uint32_t seq = 0;
@@ -127,6 +126,7 @@ void* udp_sendto(void* args_ptr) {
     }
 
     free(batch);
+    shutdown(sock, SHUT_RDWR);
     close(sock);
     return NULL;
 }
@@ -209,10 +209,6 @@ void* udp_recv(void* args_ptr) {
             perror("poll failed");
             break;
         } else if (ready == 0) {
-            // Timeout - check if we should exit
-            if (args->duration > 0 && stats.received_packets > 0) {
-                const double elapsed = (get_monotonic_time() - stats.first_ts) / (double)NS_PER_SEC;
-            }
             continue;
         }
 
@@ -313,35 +309,39 @@ void* udp_recv(void* args_ptr) {
     fprintf(args->out,"Total Bytes:     %.2f MB\n", stats.total_bytes / 1e6);
     fprintf(args->out,"Payload Bytes:   %.2f MB\n", stats.payload_bytes / 1e6);
     fprintf(args->out,"Valid Packets:   %u\n", stats.received_packets);
-    fprintf(args->out,"Corrupt Packets: %u\n", stats.corrupt_packets);
-    fprintf(args->out,"Out-of-Order:    %u\n", stats.out_of_order);
-    fprintf(args->out,"Lost Packets:    %u (%.2f%%)\n", stats.lost_packets,
-           stats.expected_seq > 0 ? 100.0 * stats.lost_packets / stats.expected_seq : 0.0);
-    fprintf(args->out,"Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
-    fprintf(args->out,"Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
-    
-    // Calculate jitter statistics
-    if (stats.jitter_samples_count > 1) {
-        double mean_jitter = stats.jitter_sum / stats.jitter_samples_count;
+    if(!args->measure_delay){
+        fprintf(args->out,"Corrupt Packets: %u\n", stats.corrupt_packets);
+        fprintf(args->out,"Out-of-Order:    %u\n", stats.out_of_order);
+        fprintf(args->out,"Lost Packets:    %u (%.2f%%)\n", stats.lost_packets,
+            stats.expected_seq > 0 ? 100.0 * stats.lost_packets / stats.expected_seq : 0.0);
+        fprintf(args->out,"Throughput:      %.2f Mbps\n", (stats.total_bytes * 8.0) / (duration_sec * 1e6));
+        fprintf(args->out,"Goodput:         %.2f Mbps\n", (stats.payload_bytes * 8.0) / (duration_sec * 1e6));
         
-        // Calculate standard deviation
-        double variance = (stats.jitter_sum_squares / stats.jitter_samples_count) - 
-                         (mean_jitter * mean_jitter);
-        double stddev = sqrt(variance > 0 ? variance : 0);
-        
-        fprintf(args->out,"Avg Jitter:      %.3f ms\n", mean_jitter);
-        fprintf(args->out,"Jitter Std Dev:  %.3f ms\n", stddev);
+        // Calculate jitter statistics
+        if (stats.jitter_samples_count > 1) {
+            double mean_jitter = stats.jitter_sum / stats.jitter_samples_count;
+            
+            // Calculate standard deviation
+            double variance = (stats.jitter_sum_squares / stats.jitter_samples_count) - 
+                            (mean_jitter * mean_jitter);
+            double stddev = sqrt(variance > 0 ? variance : 0);
+            
+            fprintf(args->out,"Avg Jitter:      %.3f ms\n", mean_jitter);
+            fprintf(args->out,"Jitter Std Dev:  %.3f ms\n", stddev);
+        }
+    }else{
+            fprintf(args->out,"One-Way Delay:\n");
+            fprintf(args->out,"  Average: %.3f ms\n", stats.total_owd_ns / (1e6 * stats.received_packets));
+            fprintf(args->out,"  Minimum: %.3f ms\n", stats.min_owd_ns / 1e6);
+            fprintf(args->out,"  Maximum: %.3f ms\n", stats.max_owd_ns / 1e6);
     }
     // In your statistics printing code:
-    fprintf(args->out,"One-Way Delay:\n");
-    fprintf(args->out,"  Average: %.3f ms\n", stats.total_owd_ns / (1e6 * stats.received_packets));
-    fprintf(args->out,"  Minimum: %.3f ms\n", stats.min_owd_ns / 1e6);
-    fprintf(args->out,"  Maximum: %.3f ms\n", stats.max_owd_ns / 1e6);
     
     fprintf(args->out,"========================\n");
 
     // Clean up
     free(stats.jitter_samples);
+    shutdown(sock, SHUT_RDWR);
     close(sock);
     return NULL;
 }
