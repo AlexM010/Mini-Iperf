@@ -16,7 +16,7 @@
 #define NS_PER_SEC 1000000000L
 int server_socket=-1;
 extern volatile sig_atomic_t stop_flag;
-extern pthread_t udp_receiver_thread;
+extern pthread_t *udp_receiver_threads;
 extern struct arguments args;
 uint64_t clock_offset;  // For OWD calculations
 extern uint64_t current_mbps;
@@ -141,10 +141,19 @@ void* server_channel_recv(void* client_socket) {
                 break;
             }
             case MSG_START_EXP: {
-                recv(sock, &args.measure_delay, sizeof(args.measure_delay), MSG_WAITALL);
-                args.measure_delay = ntohl(args.measure_delay);
+                struct arguments arg;
+                recv(sock, &arg, sizeof(arg), MSG_WAITALL);
+                args.measure_delay = ntohl(arg.measure_delay);
+                args.num_streams=ntohl(arg.num_streams);
                 fprintf(args.out,"Experiment started by client\n");
-                pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
+                udp_receiver_threads=malloc(sizeof(pthread_t)*args.num_streams);
+                for(int i = 0; i < args.num_streams; i++) {
+                    struct arguments* arg= malloc(sizeof(struct arguments));
+                    memcpy(arg, &args, sizeof(struct arguments));
+                    arg->stream_id = i;
+                    arg->port=args.port+i+1;
+                    pthread_create(&udp_receiver_threads[i], NULL, udp_recv, (void*)arg);
+                }
                 pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&sock);
                 stop_flag = 1; // Set the flag to indicate the experiment is running
 
@@ -155,7 +164,9 @@ void* server_channel_recv(void* client_socket) {
                 fprintf(args.out,"Experiment stopped by client\n");
                 stop_flag = 0;
                 // Wait for UDP receiver thread to finish
-                pthread_join(udp_receiver_thread, NULL);
+                for(int i=0;i<args.num_streams;i++){
+                    pthread_join(udp_receiver_threads[i], NULL);
+                }
                 pthread_kill(server_send_thread, 0); // Terminate the send thread
                 break;
             }

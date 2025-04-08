@@ -8,6 +8,7 @@ extern volatile sig_atomic_t stop_flag;
 extern int64_t clock_offset;  // For OWD calculations
 uint64_t bytes_send_per_second=0;
 uint64_t current_mbps=0;
+extern pthread_mutex_t lock;
 // Utility function to check if all bytes in buffer match expected value
 static int all_bytes_equal(const void *ptr, int c, size_t n) {
     const unsigned char *p = ptr;
@@ -323,7 +324,8 @@ void* udp_recv(void* args_ptr) {
         }
         // Print progress based on the given interval
         static uint64_t last_print_time = 0;
-        if (current_time >= last_print_time + args->interval) {
+        if (current_time >= last_print_time + args->interval && args->stream_id==0) {
+            
             fprintf(args->out, "Time: %lus, Received Packets: %u, Throughput: %.2ld Mbps\n",
             current_time - (stats.first_ts / NS_PER_SEC),
             stats.received_packets,
@@ -335,8 +337,9 @@ void* udp_recv(void* args_ptr) {
     // Calculate final statistics
     double duration_sec = (stats.last_ts - stats.first_ts) / (double)NS_PER_SEC;
     if (duration_sec <= 0) duration_sec = 1e-9;
-
+    pthread_mutex_lock(&lock);
     fprintf(args->out,"\n=== UDP Statistics ===\n");
+    fprintf(args->out,"Stream_ID:  %d\n", args->stream_id);
     fprintf(args->out,"Duration:        %.3f sec\n", duration_sec);
     fprintf(args->out,"Total Bytes:     %.2f MB\n", stats.total_bytes / 1e6);
     fprintf(args->out,"Payload Bytes:   %.2f MB\n", stats.payload_bytes / 1e6);
@@ -370,7 +373,7 @@ void* udp_recv(void* args_ptr) {
     // In your statistics printing code:
     
     fprintf(args->out,"========================\n");
-
+    pthread_mutex_unlock(&lock);
     // Clean up
     free(stats.jitter_samples);
     shutdown(sock, SHUT_RDWR);

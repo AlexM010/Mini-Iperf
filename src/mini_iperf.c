@@ -21,7 +21,7 @@ int who = UNDEFINED;
 int line=0;
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_t server_recv_thread, server_send_thread,client_send_thread,client_recv_thread;
-pthread_t udp_sender_thread, udp_receiver_thread;
+pthread_t *udp_sender_threads, *udp_receiver_threads;
 volatile sig_atomic_t stop_flag = 1;
 /**
  * Signal handler for SIGINT (Ctrl+C)

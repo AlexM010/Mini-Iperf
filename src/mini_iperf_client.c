@@ -13,7 +13,7 @@
 #include "mini_iperf.h"
 int client_socket=-1;
 extern int duration;
-extern pthread_t udp_sender_thread;
+extern pthread_t* udp_sender_threads;
 extern pthread_t client_recv_thread;
 extern volatile sig_atomic_t stop_flag;
 extern struct arguments args;
@@ -178,9 +178,27 @@ void* client_channel_send(void* client_socket) {
         sleep(args.wait_duration); // Wait for the specified duration
     }
     // 2. Send experiment start command
-    send_tcp_message(sock, MSG_START_EXP,&args.measure_delay, sizeof(args.measure_delay));
+    struct arguments arg;
+    memcpy(&arg, &args, sizeof(struct arguments));
+    arg.port = htonl(args.port);
+    arg.num_streams = htonl(args.num_streams);
+    arg.duration = htonl(args.duration);
+    arg.stream_id = htonl(args.stream_id);
+    arg.wait_duration = htonl(args.wait_duration);
+    arg.measure_delay = htonl(args.measure_delay);
+
     pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&sock);
-    pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
+    int stream_port=args.port+1;
+    udp_sender_threads=malloc(sizeof(pthread_t)*args.num_streams);
+    for(int i = 0; i < args.num_streams; i++) {
+        struct arguments* arg= malloc(sizeof(struct arguments));
+        memcpy(arg, &args, sizeof(struct arguments));
+        arg->stream_id = i;
+        arg->port=stream_port++;
+        pthread_create(&udp_sender_threads[i], NULL, udp_sendto, (void*)arg);
+    }
+    send_tcp_message(sock, MSG_START_EXP,&arg, sizeof(arg));
+    
     
     if (args.duration>0)
     {
@@ -192,6 +210,9 @@ void* client_channel_send(void* client_socket) {
     //thread to create  client channel recv trread
 
     pthread_join(client_recv_thread, NULL);
-    pthread_join(udp_sender_thread, NULL);
+    //join threads
+    for(int i=0;i<args.num_streams;i++){
+        pthread_join(udp_sender_threads[i],NULL);
+    }
     return NULL;
 }

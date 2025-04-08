@@ -52,6 +52,7 @@
     int measure_delay;      // -d: Flag for delay measurement mode
     int wait_duration;      // -w: Wait duration before transmission
     FILE* out;
+    int stream_id;
 };
 #define HEADER_SIZE 24  // Define fixed header size (adjust as needed)
 /**
