@@ -6,6 +6,7 @@
 #define NS_PER_SEC 1000000000L
 extern volatile sig_atomic_t stop_flag;
 extern int64_t clock_offset;  // For OWD calculations
+uint64_t bytes_send_per_second=0;
 uint64_t current_mbps=0;
 // Utility function to check if all bytes in buffer match expected value
 static int all_bytes_equal(const void *ptr, int c, size_t n) {
@@ -124,6 +125,17 @@ void* udp_sendto(void* args_ptr) {
                 nanosleep(&delay, NULL);
             }
         }
+        // Print progress based on the given interval
+        static uint64_t last_print_time = 0;
+        if (current_time / NS_PER_SEC >= last_print_time + args->interval) {
+            fprintf(args->out, "Time: %lus, Sent Packets: %u, Bytes sent: %.2f MB\n",
+                (current_time - start_time) / NS_PER_SEC,
+                seq,
+                (bytes_send_per_second * 8.0) / 1e6);
+            last_print_time = current_time / NS_PER_SEC;
+            bytes_send_per_second = 0; // Reset bytes counter for the next interval
+        }
+        bytes_send_per_second += args->packet_size * BATCH_SIZE;
     }
 
     free(batch);

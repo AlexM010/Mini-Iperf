@@ -10,7 +10,7 @@ void safe_print(char* message) {
 
 void init_arguments(struct arguments* args) {
     memset(args, 0, sizeof(struct arguments)); // Clear entire structure
-    args->interval = 1;          // Default 1 second interval
+    args->interval = 3;          // Default 1 second interval
     args->packet_size =1460;    // Default 1KB packet size
     args->num_streams = 1;       // Default single stream
     args->duration = -1;         // -1 means unlimited duration

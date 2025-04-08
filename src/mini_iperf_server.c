@@ -141,6 +141,8 @@ void* server_channel_recv(void* client_socket) {
                 break;
             }
             case MSG_START_EXP: {
+                recv(sock, &args.measure_delay, sizeof(args.measure_delay), MSG_WAITALL);
+                args.measure_delay = ntohl(args.measure_delay);
                 fprintf(args.out,"Experiment started by client\n");
                 pthread_create(&udp_receiver_thread, NULL, udp_recv, (void*)&args);
                 pthread_create(&server_send_thread, NULL, server_channel_send, (void*)&sock);

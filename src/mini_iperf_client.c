@@ -178,7 +178,7 @@ void* client_channel_send(void* client_socket) {
         sleep(args.wait_duration); // Wait for the specified duration
     }
     // 2. Send experiment start command
-    send_tcp_message(sock, MSG_START_EXP,NULL, 0);
+    send_tcp_message(sock, MSG_START_EXP,&args.measure_delay, sizeof(args.measure_delay));
     pthread_create(&client_recv_thread, NULL, client_channel_recv, (void*)&sock);
     pthread_create(&udp_sender_thread, NULL, udp_sendto, (void*)&args);
     
